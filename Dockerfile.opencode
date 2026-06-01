@@ -1,0 +1,19 @@
+FROM node:20-bookworm-slim
+
+WORKDIR /workspaces
+
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
+ENV NPM_CONFIG_FUND=false
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git curl ca-certificates python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g opencode-ai
+
+EXPOSE 4096
+
+COPY entrypoint-opencode.sh /entrypoint-opencode.sh
+RUN chmod +x /entrypoint-opencode.sh
+
+ENTRYPOINT ["/entrypoint-opencode.sh"]

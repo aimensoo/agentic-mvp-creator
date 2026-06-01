@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pipeline
+      POSTGRES_USER: pipeline
+      POSTGRES_PASSWORD: pipeline
+    ports:
+      - "5432:5432"
+    volumes:
+      - pipeline-db-data:/var/lib/postgresql/data
+
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://pipeline:pipeline@postgres:5432/pipeline
+      OPENCODE_API_URL: http://opencode:4096
+      WORKSPACE_ROOT: /workspaces
+      OPENCODE_WORKSPACE_ROOT: /workspaces
+    volumes:
+      - ./workspaces:/workspaces
+    depends_on:
+      - postgres
+      - opencode
+
+  opencode:
+    build:
+      context: .
+      dockerfile: Dockerfile.opencode
+    ports:
+      - "4096:4096"
+    environment:
+      OPENCODE_SERVER_PASSWORD: ${OPENCODE_SERVER_PASSWORD}
+      OPENCODE_MODEL: ${OPENCODE_MODEL:-zai-coding-plan/glm-5.1}
+    volumes:
+      - ./workspaces:/workspaces
+      - ./.opencode-share:/root/.local/share/opencode
+      - ./.opencode-state:/root/.local/state/opencode
+
+  # OpenClaw is expected to run separately. Point OPENCLAW_API_URL in .env
+  # to your OpenClaw/Ollama-compatible endpoint.
+
+volumes:
+  pipeline-db-data:

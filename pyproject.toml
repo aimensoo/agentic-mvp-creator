@@ -1,0 +1,36 @@
+[project]
+name = "telegram-ai-pipeline-runner"
+version = "0.1.0"
+description = "Telegram-first backend for running AI MVP generation pipelines."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = []
+keywords = ["ai", "pipeline", "telegram", "fastapi", "opencode"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: FastAPI",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Software Development :: Code Generators",
+]
+
+[project.urls]
+Repository = "https://github.com/your-org/telegram-ai-pipeline-runner"
+Documentation = "https://github.com/your-org/telegram-ai-pipeline-runner/tree/main/docs"
+Issues = "https://github.com/your-org/telegram-ai-pipeline-runner/issues"
+Changelog = "https://github.com/your-org/telegram-ai-pipeline-runner/blob/main/CHANGELOG.md"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = [
+  "workspaces",
+  ".opencode-share",
+  ".opencode-state",
+]
+
+[tool.ruff.lint]
+select = ["F821", "F822", "F823"]

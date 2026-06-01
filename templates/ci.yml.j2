@@ -1,0 +1,870 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "{{ python_version }}"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "{{ node_version }}"
+
+      - name: Run project checks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          detect_test_compose_file() {
+            local configured=""
+            if [ -f mvp.config.json ]; then
+              configured="$(
+                node <<'NODE'
+          const fs = require("fs");
+          try {
+            const config = JSON.parse(fs.readFileSync("mvp.config.json", "utf8"));
+            const composeFile = config.runtime && config.runtime.compose_file;
+            if (composeFile && fs.existsSync(composeFile)) {
+              process.stdout.write(composeFile);
+            }
+          } catch {
+          }
+          NODE
+              )"
+            fi
+
+            if [ -n "$configured" ]; then
+              printf "%s" "$configured"
+              return 0
+            fi
+
+            for candidate in docker-compose.yml docker-compose.yaml compose.yml compose.yaml; do
+              if [ -f "$candidate" ]; then
+                printf "%s" "$candidate"
+                return 0
+              fi
+            done
+          }
+
+          prepare_env_file() {
+            local compose_file="$1"
+            local compose_dir
+            compose_dir="$(dirname "$compose_file")"
+            if [ "$compose_dir" = "." ]; then
+              compose_dir=""
+            else
+              compose_dir="${compose_dir}/"
+            fi
+
+            local target_env="${compose_dir}.env"
+            if [ -f "$target_env" ]; then
+              return 0
+            fi
+
+            for template in \
+              "${compose_dir}.env.example" \
+              ".env.example" \
+              "${compose_dir}.env.sample" \
+              ".env.sample" \
+              "${compose_dir}.env.template" \
+              ".env.template"; do
+              if [ -f "$template" ]; then
+                cp "$template" "$target_env"
+                echo "Created $target_env from $template for CI test dependencies."
+                return 0
+              fi
+            done
+          }
+
+          postgres_services_for_compose() {
+            local compose_file="$1"
+            docker compose -f "$compose_file" config --format json | python -c '
+          import json, sys
+
+          data = json.load(sys.stdin)
+          services = data.get("services", {})
+          postgres_services = []
+
+          for name, service in services.items():
+              image = str(service.get("image") or "").lower()
+              environment = service.get("environment") or {}
+              if isinstance(environment, dict):
+                  env_text = " ".join(f"{key}={value}" for key, value in environment.items()).upper()
+              else:
+                  env_text = " ".join(str(item) for item in environment).upper()
+
+              if image.startswith("postgres") or "POSTGRES_DB" in env_text or "POSTGRES_USER" in env_text:
+                  postgres_services.append(name)
+
+          print(" ".join(postgres_services))
+          '
+          }
+
+          start_postgres_for_node_tests() {
+            local compose_file="${1:-}"
+            if [ -z "$compose_file" ]; then
+              return 0
+            fi
+
+            if [ ! -f "$compose_file" ]; then
+              echo "Docker Compose file does not exist: $compose_file"
+              exit 1
+            fi
+
+            prepare_env_file "$compose_file"
+
+            local postgres_services
+            postgres_services="$(postgres_services_for_compose "$compose_file")"
+            if [ -z "$postgres_services" ]; then
+              return 0
+            fi
+
+            echo "Starting Postgres service(s) for Node tests: $postgres_services"
+            docker compose -f "$compose_file" up -d $postgres_services
+            docker compose -f "$compose_file" ps
+
+            local service
+            for service in $postgres_services; do
+              for attempt in {1..60}; do
+                if docker compose -f "$compose_file" exec -T "$service" sh -lc 'pg_isready ${POSTGRES_USER:+-U "$POSTGRES_USER"} ${POSTGRES_DB:+-d "$POSTGRES_DB"}' >/dev/null 2>&1; then
+                  echo "Postgres service is ready: $service"
+                  break
+                fi
+
+                if [ "$attempt" -eq 60 ]; then
+                  echo "Postgres service did not become ready: $service"
+                  docker compose -f "$compose_file" logs --tail=200 "$service"
+                  exit 1
+                fi
+
+                sleep 2
+              done
+            done
+          }
+
+          mapfile -t packages < <(find . -maxdepth 3 -name package.json \
+            -not -path "*/node_modules/*" \
+            -not -path "*/dist/*" \
+            -not -path "*/build/*" \
+            -not -path "*/.git/*" | sort)
+
+          if [ -n "${packages[*]}" ]; then
+            TEST_COMPOSE_FILE="$(detect_test_compose_file)"
+            start_postgres_for_node_tests "$TEST_COMPOSE_FILE"
+
+            for package_json in "${packages[@]}"; do
+              package_dir="$(dirname "$package_json")"
+              if [ -d "$package_dir/node_modules" ]; then
+                continue
+              fi
+
+              if node -e "const p=require(process.argv[1]); process.exit(p.dependencies||p.devDependencies||p.optionalDependencies||p.peerDependencies ? 0 : 1)" "$package_json"; then
+                if [ -f "$package_dir/package-lock.json" ]; then
+                  npm --prefix "$package_dir" ci
+                else
+                  npm --prefix "$package_dir" install
+                fi
+              fi
+            done
+
+            root_has_test=false
+            if [ -f package.json ] && node -e "const p=require('./package.json'); process.exit(p.scripts && p.scripts.test ? 0 : 1)"; then
+              root_has_test=true
+              npm test
+            elif [ -f package.json ] && node -e "const p=require('./package.json'); process.exit(p.scripts && p.scripts.build ? 0 : 1)"; then
+              npm run build
+            fi
+
+            ran_check=false
+            if [ "$root_has_test" = true ]; then
+              ran_check=true
+            fi
+
+            for package_json in "${packages[@]}"; do
+              package_dir="$(dirname "$package_json")"
+              if [ "$package_dir" = "." ]; then
+                continue
+              fi
+
+              if [ "$root_has_test" = false ] && node -e "const p=require(process.argv[1]); process.exit(p.scripts && p.scripts.test ? 0 : 1)" "$package_json"; then
+                ran_check=true
+                npm --prefix "$package_dir" test
+              elif node -e "const p=require(process.argv[1]); process.exit(p.scripts && p.scripts.build ? 0 : 1)" "$package_json"; then
+                ran_check=true
+                npm --prefix "$package_dir" run build
+              fi
+            done
+
+            if [ "$ran_check" = false ]; then
+              echo "No runnable Node checks found. Expected package.json scripts such as test or build."
+              exit 1
+            fi
+          elif [ -f requirements.txt ] || [ -f pyproject.toml ]; then
+            if [ -f requirements.txt ]; then
+              python -m pip install -r requirements.txt
+            fi
+            python -m pytest --tb=short -q
+          else
+            echo "No supported project type found. Expected package.json, requirements.txt, or pyproject.toml."
+            exit 1
+          fi
+
+  docker-runtime:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Docker runtime contract
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f mvp.config.json ]; then
+            echo "mvp.config.json is required for Docker runtime verification."
+            exit 1
+          fi
+
+          node <<'NODE'
+          const fs = require("fs");
+          const config = JSON.parse(fs.readFileSync("mvp.config.json", "utf8"));
+          if (config.version !== 2) {
+            throw new Error("mvp.config.json must use contract v2; legacy smoke_flow/primary_entity contracts are not accepted by CI");
+          }
+          if (!config.runtime || config.runtime.type !== "docker_compose") {
+            throw new Error("mvp.config.json v2 runtime.type must be docker_compose");
+          }
+          if (!config.runtime.compose_file) {
+            throw new Error("mvp.config.json v2 runtime.compose_file is required");
+          }
+          if (!Array.isArray(config.readiness) || config.readiness.length === 0) {
+            throw new Error("mvp.config.json v2 readiness must be a non-empty array");
+          }
+          if (!config.targets || Object.keys(config.targets).length === 0) {
+            throw new Error("mvp.config.json v2 targets must be a non-empty object");
+          }
+          if (!Array.isArray(config.flows) || config.flows.length === 0) {
+            throw new Error("mvp.config.json v2 flows must be a non-empty array");
+          }
+          const frontend = config.readiness.find((item) => item.name === "frontend") || config.readiness[0];
+          const api = config.readiness.find((item) => item.name === "api");
+          fs.appendFileSync(process.env.GITHUB_ENV, `MVP_CONTRACT_VERSION=2\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `MVP_APP_URL=${frontend.url}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `MVP_API_URL=${api ? api.url : ""}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `MVP_START_COMMAND=${config.runtime.start_command || `docker compose -f ${config.runtime.compose_file} up -d`}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `MVP_SEED_COMMAND=${config.runtime.seed_command || ""}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `MVP_READINESS_JSON=${JSON.stringify(config.readiness)}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `MVP_COMPOSE_FILE=${config.runtime.compose_file}\n`);
+          NODE
+
+          MVP_COMPOSE_FROM_CONFIG="$(node -e 'const fs=require("fs"); const c=JSON.parse(fs.readFileSync("mvp.config.json","utf8")); process.stdout.write(c.runtime.compose_file || "");')"
+          if [ -n "$MVP_COMPOSE_FROM_CONFIG" ]; then
+            if [ ! -f "$MVP_COMPOSE_FROM_CONFIG" ]; then
+              echo "Docker Compose file from mvp.config.json does not exist: $MVP_COMPOSE_FROM_CONFIG"
+              exit 1
+            fi
+            echo "MVP_COMPOSE_FILE=$MVP_COMPOSE_FROM_CONFIG" >> "$GITHUB_ENV"
+          elif [ -f docker-compose.yml ]; then
+            echo "MVP_COMPOSE_FILE=docker-compose.yml" >> "$GITHUB_ENV"
+          elif [ -f docker-compose.yaml ]; then
+            echo "MVP_COMPOSE_FILE=docker-compose.yaml" >> "$GITHUB_ENV"
+          elif [ -f compose.yml ]; then
+            echo "MVP_COMPOSE_FILE=compose.yml" >> "$GITHUB_ENV"
+          elif [ -f compose.yaml ]; then
+            echo "MVP_COMPOSE_FILE=compose.yaml" >> "$GITHUB_ENV"
+          else
+            echo "No Docker Compose file found."
+            exit 1
+          fi
+
+      - name: Run project Docker CI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f .pipeline/docker-ci.sh ]; then
+            echo "Project Docker CI script is required at .pipeline/docker-ci.sh"
+            exit 1
+          fi
+
+          chmod +x .pipeline/docker-ci.sh
+          ./.pipeline/docker-ci.sh
+
+      - name: Run browser smoke flow
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet playwright
+          python -m playwright install --with-deps chromium
+
+          python <<'PY'
+          import json
+          import fnmatch
+          import re
+          import sys
+          import time
+          import traceback
+          from collections import deque
+          from pathlib import Path
+          from urllib.parse import urlparse
+
+          from playwright.sync_api import sync_playwright, expect
+
+
+          config = json.loads(Path("mvp.config.json").read_text())
+          if config.get("version") != 2:
+              raise AssertionError("mvp.config.json must use contract v2")
+
+          def browser_base_url(config):
+              readiness = config.get("readiness") or []
+              frontend = next((item for item in readiness if item.get("name") == "frontend"), None)
+              selected = frontend or (readiness[0] if readiness else None)
+              if not selected or not selected.get("url"):
+                  raise AssertionError("mvp.config.json v2 readiness must include a browser URL")
+              return selected["url"]
+
+
+          app_url = browser_base_url(config).rstrip("/")
+          ARTIFACT_DIR = Path("smoke-artifacts")
+          MAX_DIAGNOSTIC_TEXT_CHARS = 4000
+          MAX_STORAGE_VALUE_CHARS = 500
+          SENSITIVE_STORAGE_KEY_RE = re.compile(
+              r"(token|secret|password|passwd|auth|jwt|session|cookie|credential|api[_-]?key)",
+              re.IGNORECASE,
+          )
+          SENSITIVE_STORAGE_VALUE_RE = re.compile(
+              r"(Bearer\s+[A-Za-z0-9._~+/=-]+|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)",
+              re.IGNORECASE,
+          )
+          SECRET_PATTERNS = [
+              re.compile(r"github_pat_[A-Za-z0-9_]+"),
+              re.compile(r"gh[pousr]_[A-Za-z0-9_]+"),
+              re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{20,}\b"),
+          ]
+          URL_CREDENTIALS_RE = re.compile(r"(https?://)([^/@\s]+)@")
+          TELEGRAM_BOT_URL_RE = re.compile(r"(https://api\.telegram\.org/bot)([^/\s]+)")
+          console_errors = deque(maxlen=20)
+          failed_requests = deque(maxlen=20)
+          bad_responses = deque(maxlen=20)
+          recent_network = deque(maxlen=40)
+
+
+          class SmokeStepError(AssertionError):
+              def __init__(self, step_path, action, payload, cause):
+                  self.step_path = step_path
+                  self.action = action
+                  self.payload = payload
+                  self.cause = cause
+                  payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+                  super().__init__(
+                      f"{step_path}: {action} step failed. payload={payload_json}. "
+                      f"error={cause.__class__.__name__}: {cause}"
+                  )
+
+
+          def redact(value) -> str:
+              text = "" if value is None else str(value)
+              text = URL_CREDENTIALS_RE.sub(r"\1***@", text)
+              text = TELEGRAM_BOT_URL_RE.sub(r"\1***", text)
+              for pattern in SECRET_PATTERNS:
+                  text = pattern.sub("***", text)
+              return SENSITIVE_STORAGE_VALUE_RE.sub("***", text)
+
+
+          def tail_text(text: str, limit: int) -> str:
+              if len(text) <= limit:
+                  return text
+              return text[-limit:]
+
+
+          def redact_storage_value(key: str, value) -> str:
+              text = "" if value is None else str(value)
+              if SENSITIVE_STORAGE_KEY_RE.search(key):
+                  return "***"
+              return tail_text(redact(text), MAX_STORAGE_VALUE_CHARS)
+
+
+          def guarded(handler):
+              def wrapped(*args, **kwargs):
+                  try:
+                      handler(*args, **kwargs)
+                  except Exception:
+                      return None
+
+              return wrapped
+
+
+          def request_snapshot(event, request):
+              return {
+                  "event": event,
+                  "method": getattr(request, "method", None),
+                  "url": redact(getattr(request, "url", "")),
+                  "resource_type": getattr(request, "resource_type", None),
+              }
+
+
+          def on_console(message):
+              if getattr(message, "type", "") != "error":
+                  return
+              console_errors.append(
+                  {
+                      "type": getattr(message, "type", "error"),
+                      "text": redact(getattr(message, "text", "")),
+                      "location": getattr(message, "location", None),
+                  }
+              )
+
+
+          def on_request(request):
+              recent_network.append(request_snapshot("request", request))
+
+
+          def on_request_failed(request):
+              entry = request_snapshot("requestfailed", request)
+              failure = getattr(request, "failure", None)
+              if callable(failure):
+                  failure = failure()
+              if failure:
+                  entry["failure"] = redact(failure)
+              failed_requests.append(entry)
+              recent_network.append(entry)
+
+
+          def on_response(response):
+              request = getattr(response, "request", None)
+              entry = {
+                  "event": "response",
+                  "method": getattr(request, "method", None) if request is not None else None,
+                  "url": redact(getattr(response, "url", "")),
+                  "status": getattr(response, "status", None),
+              }
+              if entry["status"] is not None and entry["status"] >= 400:
+                  bad_responses.append(entry)
+              recent_network.append(entry)
+
+
+          def attach_diagnostics(page):
+              page.on("console", guarded(on_console))
+              page.on("request", guarded(on_request))
+              page.on("requestfailed", guarded(on_request_failed))
+              page.on("response", guarded(on_response))
+
+
+          def safe_page_url(page) -> str:
+              if page is None:
+                  return "<page unavailable>"
+              return redact(getattr(page, "url", ""))
+
+
+          def safe_page_title(page) -> str:
+              if page is None:
+                  return "<page unavailable>"
+              try:
+                  return redact(page.title())
+              except Exception as exc:
+                  return f"<title unavailable: {exc.__class__.__name__}: {exc}>"
+
+
+          def safe_page_body_text(page) -> str:
+              if page is None:
+                  return ""
+              try:
+                  return redact(page.locator("body").inner_text())
+              except Exception as exc:
+                  return f"<body unavailable: {exc.__class__.__name__}: {exc}>"
+
+
+          def safe_page_html(page) -> str:
+              if page is None:
+                  return ""
+              try:
+                  return redact(page.content())
+              except Exception as exc:
+                  return f"<html unavailable: {exc.__class__.__name__}: {exc}>"
+
+
+          def read_storage(page):
+              if page is None:
+                  return {"localStorage": {"<error>": "page unavailable"}, "sessionStorage": {"<error>": "page unavailable"}}
+              try:
+                  return page.evaluate(
+                      """
+                      () => {
+                        const collect = (storage) => {
+                          const entries = {};
+                          for (let index = 0; index < storage.length; index += 1) {
+                            const key = storage.key(index);
+                            entries[key] = storage.getItem(key);
+                          }
+                          return entries;
+                        };
+                        return {
+                          localStorage: collect(window.localStorage),
+                          sessionStorage: collect(window.sessionStorage),
+                        };
+                      }
+                      """
+                  )
+              except Exception as exc:
+                  error = f"{exc.__class__.__name__}: {exc}"
+                  return {"localStorage": {"<error>": error}, "sessionStorage": {"<error>": error}}
+
+
+          def read_cookie_metadata(page):
+              if page is None:
+                  return [{"error": "page unavailable"}]
+              try:
+                  cookies = page.context.cookies()
+              except Exception as exc:
+                  return [{"error": f"{exc.__class__.__name__}: {exc}"}]
+              return [
+                  {
+                      "name": cookie.get("name"),
+                      "domain": cookie.get("domain"),
+                      "path": cookie.get("path"),
+                      "httpOnly": cookie.get("httpOnly"),
+                      "secure": cookie.get("secure"),
+                      "sameSite": cookie.get("sameSite"),
+                  }
+                  for cookie in cookies
+              ]
+
+
+          def format_storage_entries(entries):
+              if not entries:
+                  return ["- <empty>"]
+              lines = []
+              for key in sorted(entries):
+                  lines.append(f"- {redact(key)}: {redact_storage_value(key, entries[key])}")
+              return lines
+
+
+          def format_mapping_entries(entries):
+              if not entries:
+                  return ["- <empty>"]
+              return [f"- {json.dumps(entry, ensure_ascii=False, sort_keys=True, default=str)}" for entry in entries]
+
+
+          def format_failure(page, exc):
+              storage = read_storage(page)
+              lines = [
+                  "browser smoke failure diagnostics",
+                  f"failing_step: {getattr(exc, 'step_path', 'unknown')}",
+                  f"action: {getattr(exc, 'action', 'unknown')}",
+                  f"payload: {json.dumps(getattr(exc, 'payload', {}), ensure_ascii=False, sort_keys=True, default=str)}",
+                  f"error: {exc.__class__.__name__}: {exc}",
+                  f"current_url: {safe_page_url(page)}",
+                  f"page_title: {safe_page_title(page)}",
+                  "body_text_tail:",
+                  tail_text(safe_page_body_text(page), MAX_DIAGNOSTIC_TEXT_CHARS) or "<empty>",
+                  "localStorage:",
+                  *format_storage_entries(storage.get("localStorage", {})),
+                  "sessionStorage:",
+                  *format_storage_entries(storage.get("sessionStorage", {})),
+                  "cookies:",
+                  *format_mapping_entries(read_cookie_metadata(page)),
+                  "console_errors:",
+                  *format_mapping_entries(list(console_errors)),
+                  "failed_requests:",
+                  *format_mapping_entries(list(failed_requests)),
+                  "responses_4xx_5xx:",
+                  *format_mapping_entries(list(bad_responses)),
+                  "recent_network:",
+                  *format_mapping_entries(list(recent_network)),
+                  "html_tail:",
+                  tail_text(safe_page_html(page), MAX_DIAGNOSTIC_TEXT_CHARS) or "<empty>",
+              ]
+              return "\n".join(lines)
+
+
+          def save_artifacts(page, details):
+              ARTIFACT_DIR.mkdir(exist_ok=True)
+              (ARTIFACT_DIR / "smoke-failure-diagnostics.txt").write_text(details, encoding="utf-8")
+              if page is None:
+                  return
+              try:
+                  page.screenshot(path=str(ARTIFACT_DIR / "smoke-failure.png"), full_page=True)
+              except Exception as exc:
+                  print(f"Could not save smoke screenshot: {exc}", file=sys.stderr)
+              try:
+                  (ARTIFACT_DIR / "smoke-failure.html").write_text(page.content(), encoding="utf-8")
+              except Exception as exc:
+                  print(f"Could not save smoke HTML artifact: {exc}", file=sys.stderr)
+
+
+          def url_for(path: str) -> str:
+              if path.startswith(("http://", "https://")):
+                  return path
+              return f"{app_url}/{path.lstrip('/')}"
+
+
+          def selector_from_target(target_name):
+              if not target_name:
+                  return None
+              target = config.get("targets", {}).get(target_name)
+              if not isinstance(target, dict) or not target.get("selector"):
+                  raise AssertionError(f"Unknown smoke target: {target_name}")
+              return target["selector"]
+
+
+          def selector_from_payload(payload, step_path):
+              selector = payload.get("selector") or selector_from_target(payload.get("target"))
+              if not selector:
+                  raise AssertionError(f"{step_path}: step requires selector or v2 target")
+              return selector
+
+
+          def file_path_from_payload(payload):
+              path = payload.get("path")
+              if payload.get("file"):
+                  files = config.get("fixtures", {}).get("files", {})
+                  path = files.get(payload["file"])
+                  if not path:
+                      raise AssertionError(f"Unknown fixture file: {payload['file']}")
+              if not path:
+                  raise AssertionError("upload_file step requires path or v2 logical file")
+              return path
+
+
+          def url_matches(actual_url, expected_url):
+              actual_path = urlparse(actual_url).path
+              if "*" in expected_url:
+                  return fnmatch.fnmatch(actual_url, expected_url) or fnmatch.fnmatch(actual_path, expected_url)
+              if expected_url.startswith(("http://", "https://")):
+                  return actual_url.rstrip("/") == expected_url.rstrip("/")
+              if expected_url.startswith("/"):
+                  return actual_path.rstrip("/") == expected_url.rstrip("/")
+              return actual_url.endswith(expected_url)
+
+
+          def matches_expected_response(response, expectation):
+              request = getattr(response, "request", None)
+              expected_method = str(expectation.get("method", "")).upper()
+              if expected_method and getattr(request, "method", "").upper() != expected_method:
+                  return False
+              statuses = expectation.get("status")
+              if isinstance(statuses, int):
+                  statuses = [statuses]
+              if isinstance(statuses, list) and statuses and getattr(response, "status", None) not in statuses:
+                  return False
+              expected_url = expectation.get("url")
+              return isinstance(expected_url, str) and url_matches(getattr(response, "url", ""), expected_url)
+
+
+          def click(page, payload, step_path):
+              selector = payload.get("selector") or selector_from_target(payload.get("target"))
+              if selector:
+                  page.locator(selector).first.click()
+                  return
+              text = payload.get("text")
+              if text:
+                  locator = page.get_by_text(text, exact=bool(payload.get("exact", False)))
+                  if locator.count() > 0:
+                      locator.first.click()
+                      return
+              fallback = payload.get("fallback_text")
+              if fallback:
+                  page.get_by_text(fallback, exact=bool(payload.get("exact", False))).first.click()
+                  return
+              payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+              raise AssertionError(f"{step_path}: click step requires selector, text, or fallback_text. payload={payload_json}")
+
+
+          def click_with_expect_request(page, payload, step_path):
+              expectation = payload.get("expect_request")
+              if not expectation:
+                  click(page, payload, step_path)
+                  return
+              with page.expect_response(
+                  lambda response: matches_expected_response(response, expectation),
+                  timeout=optional_timeout(expectation) or optional_timeout(payload),
+              ):
+                  click(page, payload, step_path)
+
+
+          def fill(page, payload, step_path):
+              page.locator(selector_from_payload(payload, step_path)).first.fill(str(payload["value"]))
+
+
+          def optional_timeout(payload):
+              value = payload.get("timeout")
+              return int(value) if value is not None else None
+
+
+          def assert_nonblank(page):
+              text = page.locator("body").inner_text().strip()
+              assert text, "Page body is blank"
+
+
+          def assert_styled(page):
+              result = page.evaluate(
+                  """
+                  () => {
+                    const visible = (el) => {
+                      const rect = el.getBoundingClientRect();
+                      return rect.width > 0 && rect.height > 0;
+                    };
+                    const defaultLinkColors = new Set(["rgb(0, 0, 238)", "rgb(85, 26, 139)", "rgb(0, 0, 0)"]);
+                    const defaultButtonBackgrounds = new Set(["rgb(239, 239, 239)", "rgb(240, 240, 240)", "rgba(0, 0, 0, 0)", "transparent"]);
+                    const controls = Array.from(document.querySelectorAll("button, a, input, select, textarea"));
+                    const styledControls = controls.filter((el) => {
+                      if (!visible(el)) return false;
+                      const style = window.getComputedStyle(el);
+                      const tag = el.tagName.toLowerCase();
+                      const padding = ["Top", "Right", "Bottom", "Left"]
+                        .map((side) => Number.parseFloat(style[`padding${side}`]) || 0)
+                        .reduce((sum, value) => sum + value, 0);
+                      const radius = Number.parseFloat(style.borderRadius) || 0;
+                      const hasBoxStyling = padding >= 18 || radius >= 4 || style.boxShadow !== "none";
+                      const hasColorStyling =
+                        (tag === "a" && !defaultLinkColors.has(style.color)) ||
+                        (tag === "button" && !defaultButtonBackgrounds.has(style.backgroundColor));
+                      return hasBoxStyling || hasColorStyling;
+                    });
+                    const utilityElements = Array.from(document.querySelectorAll("[class]"))
+                      .filter((el) => /(^|\\s)(bg-|text-|p-|px-|py-|rounded|shadow|border|grid|flex|gap-)/.test(el.className || ""));
+                    const styledUtilityElements = utilityElements.filter((el) => {
+                      if (!visible(el)) return false;
+                      const style = window.getComputedStyle(el);
+                      const padding = ["Top", "Right", "Bottom", "Left"]
+                        .map((side) => Number.parseFloat(style[`padding${side}`]) || 0)
+                        .reduce((sum, value) => sum + value, 0);
+                      return padding >= 16 || style.backgroundColor !== "rgba(0, 0, 0, 0)" || style.boxShadow !== "none";
+                    });
+                    return {
+                      controlCount: controls.filter(visible).length,
+                      styledControlCount: styledControls.length,
+                      utilityElementCount: utilityElements.length,
+                      styledUtilityElementCount: styledUtilityElements.length,
+                    };
+                  }
+                  """
+              )
+              if result["controlCount"] > 0 and result["styledControlCount"] == 0:
+                  raise AssertionError(f"Visible controls look browser-default: {result}")
+              if result["utilityElementCount"] >= 5 and result["styledUtilityElementCount"] == 0:
+                  raise AssertionError(f"Utility CSS classes do not affect layout/colors: {result}")
+
+
+          def target_is_visible(page, target_name):
+              try:
+                  selector = selector_from_target(target_name)
+                  return page.locator(selector).first.is_visible()
+              except Exception:
+                  return False
+
+
+          def wait_for_outcome(page, payload):
+              success = payload.get("success") if isinstance(payload.get("success"), dict) else {}
+              failure = payload.get("failure") if isinstance(payload.get("failure"), dict) else {}
+              success_target = success.get("target")
+              failure_target = failure.get("target")
+              if not success_target or not failure_target:
+                  raise AssertionError("wait_for_outcome requires success.target and failure.target")
+              deadline = time.monotonic() + ((optional_timeout(payload) or 30000) / 1000)
+              while time.monotonic() <= deadline:
+                  if target_is_visible(page, failure_target):
+                      raise AssertionError(f"Failure outcome target became visible: {failure_target}")
+                  if target_is_visible(page, success_target):
+                      return
+                  page.wait_for_timeout(250)
+              raise TimeoutError(f"Timed out waiting for outcome success target: {success_target}")
+
+
+          def smoke_steps(config):
+              flow = config["flows"][0]
+              flow_id = flow.get("id", "0")
+              return flow["steps"], f"flows.{flow_id}.steps"
+
+
+          def run_step(page, step, step_path):
+              if isinstance(step, str):
+                  action, payload = step, {}
+              else:
+                  action, payload = step["action"], step
+
+              try:
+                  run_step_action(page, action, payload, step_path)
+              except SmokeStepError:
+                  raise
+              except Exception as exc:
+                  raise SmokeStepError(step_path, action, payload, exc) from exc
+
+
+          def run_step_action(page, action, payload, step_path):
+              if action == "goto":
+                  page.goto(url_for(payload["path"]), wait_until="networkidle")
+                  if payload.get("expect_text"):
+                      expect(page.get_by_text(payload["expect_text"]).first).to_be_visible()
+              elif action == "expect_styled":
+                  assert_styled(page)
+              elif action == "click":
+                  click_with_expect_request(page, payload, step_path)
+              elif action == "fill":
+                  fill(page, payload, step_path)
+              elif action == "select":
+                  page.locator(selector_from_payload(payload, step_path)).first.select_option(str(payload["value"]))
+              elif action == "expect_text":
+                  expect(page.get_by_text(payload["text"], exact=bool(payload.get("exact", False))).first).to_be_visible(timeout=optional_timeout(payload))
+              elif action == "expect_url":
+                  page.wait_for_url(payload["url"], timeout=optional_timeout(payload))
+              elif action == "wait_for_selector":
+                  page.locator(selector_from_payload(payload, step_path)).first.wait_for(timeout=optional_timeout(payload))
+              elif action == "upload_file":
+                  page.locator(selector_from_payload(payload, step_path)).first.set_input_files(file_path_from_payload(payload))
+              elif action == "expect_download":
+                  with page.expect_download(timeout=optional_timeout(payload)):
+                      click(page, payload, step_path)
+              elif action == "wait_for_response":
+                  page.wait_for_response(payload["url"], timeout=optional_timeout(payload))
+              elif action == "screenshot":
+                  page.screenshot(path=payload["path"], full_page=bool(payload.get("full_page", True)))
+              elif action == "wait_for_outcome":
+                  wait_for_outcome(page, payload)
+              else:
+                  raise AssertionError(f"Unknown smoke action: {action}")
+
+
+          with sync_playwright() as playwright:
+              browser = playwright.chromium.launch(headless=True)
+              page = None
+              try:
+                  page = browser.new_page()
+                  attach_diagnostics(page)
+                  page.set_default_timeout(30_000)
+                  steps, step_prefix = smoke_steps(config)
+                  for step_index, step in enumerate(steps):
+                      run_step(page, step, f"{step_prefix}[{step_index}]")
+              except Exception as exc:
+                  details = format_failure(page, exc)
+                  print(details, file=sys.stderr)
+                  save_artifacts(page, details)
+                  traceback.print_exception(type(exc), exc, exc.__traceback__)
+                  raise
+              finally:
+                  browser.close()
+          PY
+
+      - name: Upload browser smoke artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-smoke-artifacts
+          path: smoke-artifacts/
+          if-no-files-found: ignore
+
+      - name: Docker runtime logs on failure
+        if: failure()
+        shell: bash
+        run: docker compose -f "${MVP_COMPOSE_FILE:-docker-compose.yml}" logs --tail=200 || true
+
+      - name: Stop Docker runtime
+        if: always()
+        shell: bash
+        run: docker compose -f "${MVP_COMPOSE_FILE:-docker-compose.yml}" down -v --remove-orphans || true

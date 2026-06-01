@@ -1,0 +1,17 @@
+.git
+.venv
+__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.DS_Store
+workspaces/*
+!workspaces/.gitkeep
+.env
+.env.*
+!.env.example
+.claude
+.opencode-share
+.opencode-state
+htmlcov
+coverage.xml
