@@ -187,15 +187,26 @@ async def _send_to_first_available(
 
 
 def _chat_candidates(job: dict[str, Any], fallback_chat_id: str) -> list[str]:
-    candidates = [
-        job.get("telegram_user_id"),
-        job.get("chat_id"),
-        fallback_chat_id,
-    ]
+    origin_candidates = _dedupe_chat_ids(
+        [
+            job.get("chat_id"),
+            job.get("telegram_user_id"),
+        ]
+    )
+    if origin_candidates:
+        return origin_candidates
+
+    return _dedupe_chat_ids([fallback_chat_id])
+
+
+def _dedupe_chat_ids(candidates: list[Any]) -> list[str]:
     result = []
     for candidate in candidates:
-        if candidate is not None and str(candidate) not in result:
-            result.append(str(candidate))
+        if candidate is None:
+            continue
+        chat_id = str(candidate).strip()
+        if chat_id and chat_id not in result:
+            result.append(chat_id)
     return result
 
 

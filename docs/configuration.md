@@ -18,9 +18,9 @@ Configuration is loaded from environment variables and `.env`.
 | `GITHUB_REPO_NAME` | Yes | Generated repository name prefix. |
 | `GITHUB_REPO_PRIVATE` | No | Whether generated repositories are private. Defaults to `true`. |
 | `TELEGRAM_BOT_TOKEN` | Yes | Telegram bot token. |
-| `TELEGRAM_APPROVAL_CHAT_ID` | No | Fallback approval chat id. |
-| `TELEGRAM_ESCALATION_CHAT_ID` | No | Fallback escalation chat id. |
-| `TELEGRAM_NOTIFICATION_CHAT_ID` | No | Fallback completion chat id. |
+| `TELEGRAM_APPROVAL_CHAT_ID` | No | Fallback approval chat id for non-Telegram jobs. Telegram-started jobs reply to their source chat. |
+| `TELEGRAM_ESCALATION_CHAT_ID` | No | Fallback escalation chat id for non-Telegram jobs. Telegram-started jobs reply to their source chat. |
+| `TELEGRAM_NOTIFICATION_CHAT_ID` | No | Fallback completion chat id for non-Telegram jobs. Telegram-started jobs reply to their source chat. |
 | `WEBHOOK_SECRET` | Yes | Shared secret for `/api/v1/webhook/trigger`. |
 | `BACKEND_PORT` | No | Host port for the bundled Compose backend service. Defaults to `18000`. |
 | `BACKEND_API_URL` | No | Backend API URL used by the local Telegram listener. |

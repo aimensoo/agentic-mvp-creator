@@ -24,7 +24,11 @@ Send the bot a product request:
 Build a small CRM where users can create leads, update statuses, add notes, and see a kanban board.
 ```
 
-The bot creates a pipeline job and replies with the job id.
+The bot creates a pipeline job and replies:
+
+```text
+Принял, скоро отправлю архитектуру на согласование
+```
 
 ## Start A Job Through HTTP
 
@@ -47,3 +51,7 @@ After spec and plan generation, the backend sends an approval message with:
 Rejecting a job asks for feedback. The next Telegram message from the same user is saved as approval feedback and the plan is regenerated.
 
 Approving a job starts workspace preparation and OpenCode execution.
+
+For jobs started from Telegram, approval, completion, error, and escalation messages are sent back to the
+same Telegram conversation that created the job. The configured `TELEGRAM_*_CHAT_ID` values are only
+fallbacks for jobs created outside Telegram, such as HTTP webhook jobs.

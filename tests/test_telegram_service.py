@@ -214,7 +214,7 @@ async def test_send_error_routes_to_escalation_chat():
     assert "boom" in call.kwargs["data"]["text"]
 
 
-async def test_send_done_prefers_customer_user_id():
+async def test_send_done_prefers_source_chat_for_telegram_jobs():
     client = _mock_client()
     job = {
         "id": "job-1",
@@ -228,10 +228,10 @@ async def test_send_done_prefers_customer_user_id():
         await service.send_done(job)
 
     call = client.post.call_args
-    assert call.kwargs["data"]["chat_id"] == "67890"
+    assert call.kwargs["data"]["chat_id"] == "12345"
 
 
-async def test_send_done_falls_back_to_source_chat_when_user_dm_fails():
+async def test_send_done_falls_back_to_customer_user_when_source_chat_fails():
     request = httpx.Request("POST", "https://api.telegram.org/bottoken/sendMessage")
     forbidden_response = httpx.Response(403, request=request)
     ok_response = MagicMock()
@@ -255,8 +255,32 @@ async def test_send_done_falls_back_to_source_chat_when_user_dm_fails():
         service = TelegramService("token", "-100", "-200", "-300")
         await service.send_done(job)
 
-    assert client.post.call_args_list[0].kwargs["data"]["chat_id"] == "67890"
-    assert client.post.call_args_list[1].kwargs["data"]["chat_id"] == "12345"
+    assert client.post.call_args_list[0].kwargs["data"]["chat_id"] == "12345"
+    assert client.post.call_args_list[1].kwargs["data"]["chat_id"] == "67890"
+
+
+async def test_send_done_does_not_use_configured_fallback_for_telegram_jobs():
+    request = httpx.Request("POST", "https://api.telegram.org/bottoken/sendMessage")
+    forbidden_response = httpx.Response(403, request=request)
+
+    client = AsyncMock()
+    client.post = AsyncMock(
+        side_effect=httpx.HTTPStatusError("Forbidden", request=request, response=forbidden_response)
+    )
+
+    job = {
+        "id": "job-1",
+        "chat_id": 12345,
+        "github_repo": "owner/repo",
+    }
+
+    with patch("services.telegram_service.httpx.AsyncClient", return_value=client):
+        service = TelegramService("token", "-100", "-200", "-300")
+        with pytest.raises(httpx.HTTPStatusError):
+            await service.send_done(job)
+
+    assert client.post.call_count == 1
+    assert client.post.call_args.kwargs["data"]["chat_id"] == "12345"
 
 
 async def test_close_closes_http_client():
