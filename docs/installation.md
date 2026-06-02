@@ -38,7 +38,7 @@ The Compose file starts Postgres, the FastAPI backend, and OpenCode. OpenClaw-co
 ## Database Migrations
 
 ```bash
-export DATABASE_URL=postgresql://pipeline:pipeline@localhost:5432/pipeline
+export DATABASE_URL=postgresql://pipeline:pipeline@localhost:15432/pipeline
 make migrations
 ```
 

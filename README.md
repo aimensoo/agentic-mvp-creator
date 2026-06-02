@@ -55,7 +55,7 @@ docker compose up --build
 Apply migrations from the host:
 
 ```bash
-export DATABASE_URL=postgresql://pipeline:pipeline@localhost:5432/pipeline
+export DATABASE_URL=postgresql://pipeline:pipeline@localhost:15432/pipeline
 make migrations
 ```
 
@@ -82,7 +82,7 @@ Build a small CRM where users can create leads, update lead statuses, add notes,
 Or start a job through HTTP:
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/v1/webhook/trigger \
+curl -X POST http://127.0.0.1:18000/api/v1/webhook/trigger \
   -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
   -H "Content-Type: application/json" \
   -d @examples/webhook-request.json

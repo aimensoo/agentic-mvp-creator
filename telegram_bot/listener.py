@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://127.0.0.1:8000/api/v1")
+BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://127.0.0.1:18000/api/v1")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 
 PENDING_REJECT_FEEDBACK: dict[tuple[int, int], str] = {}

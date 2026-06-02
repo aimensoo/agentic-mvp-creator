@@ -1,4 +1,6 @@
-.PHONY: install install-dev test lint format format-check run-backend run-bot migrations
+BACKEND_PORT ?= 18000
+
+.PHONY: install install-dev test lint format format-check run-backend run-bot migrations check-config
 
 install:
 	python3 -m pip install -r requirements.txt
@@ -19,10 +21,13 @@ format-check:
 	python3 -m ruff format --check .
 
 run-backend:
-	python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+	python3 -m uvicorn app.main:app --host 0.0.0.0 --port $(BACKEND_PORT)
 
 run-bot:
 	python3 telegram_bot/listener.py
 
 migrations:
 	./scripts/apply_migrations.sh
+
+check-config:
+	python3 scripts/check_runtime_config.py
