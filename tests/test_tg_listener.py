@@ -166,7 +166,7 @@ async def test_new_text_message_starts_pipeline(monkeypatch):
         chat_id=123,
         telegram_user_id=67890,
     )
-    assert "Pipeline job queued: job-1" in update.message.reply_text.call_args.args[0]
+    assert update.message.reply_text.call_args.args[0] == listener.TASK_ACCEPTED_MESSAGE
 
 
 async def test_trigger_pipeline_posts_user_request(monkeypatch):

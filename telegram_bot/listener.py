@@ -11,6 +11,7 @@ BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://127.0.0.1:18000/api/v1")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 
 PENDING_REJECT_FEEDBACK: dict[tuple[int, int], str] = {}
+TASK_ACCEPTED_MESSAGE = "Принял, скоро отправлю архитектуру на согласование"
 
 
 async def handle_start(update, context) -> None:
@@ -83,7 +84,7 @@ async def handle_text_message(update, context) -> None:
         return
 
     try:
-        created_job_id = await trigger_pipeline(
+        await trigger_pipeline(
             user_request=user_request,
             chat_id=message.chat.id,
             telegram_user_id=message.from_user.id,
@@ -92,7 +93,7 @@ async def handle_text_message(update, context) -> None:
         await message.reply_text(f"Could not start pipeline: {exc}")
         return
 
-    await message.reply_text(f"Pipeline job queued: {created_job_id}")
+    await message.reply_text(TASK_ACCEPTED_MESSAGE)
 
 
 async def _handle_pending_feedback(message, job_id: str, key: tuple[int, int]) -> None:
