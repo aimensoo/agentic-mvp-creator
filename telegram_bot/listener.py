@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 
 import httpx
@@ -12,6 +13,8 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 
 PENDING_REJECT_FEEDBACK: dict[tuple[int, int], str] = {}
 TASK_ACCEPTED_MESSAGE = "Принял, скоро отправлю архитектуру на согласование"
+ALLOWED_UPDATES = ["message", "callback_query"]
+logger = logging.getLogger(__name__)
 
 
 async def handle_start(update, context) -> None:
@@ -83,6 +86,11 @@ async def handle_text_message(update, context) -> None:
     if not user_request:
         return
 
+    logger.info(
+        "telegram_bot.text_received chat_type=%s text_len=%s",
+        getattr(message.chat, "type", "unknown"),
+        len(user_request),
+    )
     try:
         await trigger_pipeline(
             user_request=user_request,
@@ -90,9 +98,20 @@ async def handle_text_message(update, context) -> None:
             telegram_user_id=message.from_user.id,
         )
     except Exception as exc:
+        logger.warning(
+            "telegram_bot.pipeline_trigger_failed chat_type=%s text_len=%s error=%s",
+            getattr(message.chat, "type", "unknown"),
+            len(user_request),
+            exc,
+        )
         await message.reply_text(f"Could not start pipeline: {exc}")
         return
 
+    logger.info(
+        "telegram_bot.pipeline_triggered chat_type=%s text_len=%s",
+        getattr(message.chat, "type", "unknown"),
+        len(user_request),
+    )
     await message.reply_text(TASK_ACCEPTED_MESSAGE)
 
 
@@ -183,9 +202,24 @@ def _append_callback_result(query, result_text: str) -> str:
     return f"{text}\n========\n{result_text}"
 
 
+async def handle_error(update, context) -> None:
+    error = getattr(context, "error", None)
+    exc_info = (type(error), error, error.__traceback__) if error else None
+    logger.error(
+        "telegram_bot.update_failed update_type=%s error=%s",
+        type(update).__name__ if update else None,
+        error,
+        exc_info=exc_info,
+    )
+
+
 async def main() -> None:
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
+
+    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
@@ -193,10 +227,11 @@ async def main() -> None:
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
+    app.add_error_handler(handle_error)
 
     await app.initialize()
     await app.start()
-    await app.updater.start_polling()
+    await app.updater.start_polling(allowed_updates=ALLOWED_UPDATES)
 
     print("Telegram bot started")
     await asyncio.Event().wait()
