@@ -620,19 +620,50 @@ class PipelineRunner:
         if not ci_result.passed:
             issues = ci_result.issues or classify_ci_failure_logs(ci_result.failed_logs)
             failure_signature = ci_failure_signature_from_logs(ci_result.failed_logs, issues)
-            failure_streak = _next_ci_failure_streak(job, failure_signature["signature"])
-            attempt += 1
+            signature = failure_signature["signature"]
+            already_counted_for_commit = _ci_failure_already_counted_for_commit(
+                job,
+                signature=signature,
+                commit_sha=git_result.commit_sha,
+            )
+            attempt = int(job.get("ci_fix_retries") or attempt) + 1
             await self._db.update_job(job["id"], ci_fix_retries=attempt)
             job["ci_fix_retries"] = attempt
-            await self._db.update_job(
-                job["id"],
-                ci_failure_signature=failure_signature["signature"],
-                ci_failure_streak=failure_streak,
-                ci_failure_summary=failure_signature,
-            )
-            job["ci_failure_signature"] = failure_signature["signature"]
-            job["ci_failure_streak"] = failure_streak
-            job["ci_failure_summary"] = failure_signature
+
+            if already_counted_for_commit:
+                failure_streak = int(job.get("ci_failure_streak") or 1)
+                logger.warning(
+                    "pipeline.ci_failure_rechecked_same_commit",
+                    job_id=str(job["id"]),
+                    commit=git_result.commit_sha,
+                    signature=signature,
+                    ci_fix_retries=attempt,
+                )
+            else:
+                failure_streak = _next_ci_failure_streak(job, signature)
+                failure_summary = {**failure_signature, "commit_sha": git_result.commit_sha}
+                await self._db.update_job(
+                    job["id"],
+                    ci_failure_signature=signature,
+                    ci_failure_streak=failure_streak,
+                    ci_failure_summary=failure_summary,
+                )
+                job["ci_failure_signature"] = signature
+                job["ci_failure_streak"] = failure_streak
+                job["ci_failure_summary"] = failure_summary
+
+            if already_counted_for_commit and attempt > self._max_test_retries:
+                await self._escalate(
+                    job,
+                    reason="ci_fix_retries_exceeded",
+                    details=_ci_fix_retries_details(
+                        ci_result.failed_logs,
+                        failure_signature,
+                        attempt,
+                        git_result.commit_sha,
+                    ),
+                )
+                return
 
             if failure_streak > self._max_ci_same_failure_retries:
                 await self._escalate(
@@ -928,6 +959,17 @@ def _next_ci_failure_streak(job: dict[str, Any], signature: str) -> int:
     return 1
 
 
+def _ci_failure_already_counted_for_commit(job: dict[str, Any], *, signature: str, commit_sha: str) -> bool:
+    if not signature or not commit_sha:
+        return False
+    if signature != str(job.get("ci_failure_signature") or ""):
+        return False
+    summary = job.get("ci_failure_summary")
+    if not isinstance(summary, dict):
+        return False
+    return commit_sha == str(summary.get("commit_sha") or "")
+
+
 async def _reset_local_failure_streak(db: Any, job: dict[str, Any]) -> None:
     if not (
         job.get("local_failure_signature")
@@ -988,6 +1030,22 @@ def _ci_failure_streak_details(
     header = (
         "CI failed repeatedly with the same failure signature.\n"
         f"Consecutive repeats: {failure_streak}\n"
+        f"Signature: {failure_signature.get('signature')}\n"
+        f"Summary: {failure_signature.get('summary')}"
+    )
+    return [header, *failed_logs]
+
+
+def _ci_fix_retries_details(
+    failed_logs: list[str],
+    failure_signature: dict[str, Any],
+    attempt: int,
+    commit_sha: str,
+) -> list[str]:
+    header = (
+        "CI failed for the same commit, and automated fix attempts did not produce a new commit.\n"
+        f"Fix attempts: {attempt}\n"
+        f"Commit: {commit_sha}\n"
         f"Signature: {failure_signature.get('signature')}\n"
         f"Summary: {failure_signature.get('summary')}"
     )

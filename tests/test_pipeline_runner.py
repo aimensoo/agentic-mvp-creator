@@ -809,6 +809,70 @@ async def test_run_from_ci_testing_escalates_after_same_ci_failure_streak(servic
     assert telegram.send_escalation.call_args.kwargs["reason"] == "ci_failure_streak_exceeded"
 
 
+async def test_run_from_ci_testing_repeated_same_commit_failure_counts_fix_retry_not_ci_streak(services):
+    runner, db, spec, plan, coding, test, git, review, telegram, _ = services
+    runner._max_test_retries = 2
+    failed_logs = ["docker-runtime still failed"]
+    signature = ci_failure_signature_from_logs(failed_logs)["signature"]
+    job = {
+        "id": "job-1",
+        "status": "ci_testing",
+        "input_text": "t1",
+        "spec_text": "spec",
+        "plan_text": "plan",
+        "github_repo": "owner/repo",
+        "github_branch": "job_job-1",
+        "github_commit": "sha-existing",
+        "github_pr_url": "https://github.com/owner/repo/pull/1",
+        "review_retries": 0,
+        "ci_fix_retries": 1,
+        "ci_failure_signature": signature,
+        "ci_failure_streak": 1,
+        "ci_failure_summary": {"signature": signature, "commit_sha": "sha-existing"},
+    }
+    db.get_job.return_value = job
+    test.wait_for_ci.return_value = CIResult(passed=False, failed_logs=failed_logs)
+
+    await runner.run("job-1")
+
+    db.update_job.assert_any_call("job-1", ci_fix_retries=2)
+    assert not any(call.kwargs.get("ci_failure_streak") == 2 for call in db.update_job.call_args_list)
+    coding.start_fix.assert_called_once()
+    telegram.send_escalation.assert_not_called()
+
+
+async def test_run_from_ci_testing_escalates_fix_retries_for_repeated_same_commit_failure(services):
+    runner, db, spec, plan, coding, test, git, review, telegram, _ = services
+    failed_logs = ["docker-runtime still failed"]
+    signature = ci_failure_signature_from_logs(failed_logs)["signature"]
+    job = {
+        "id": "job-1",
+        "status": "ci_testing",
+        "input_text": "t1",
+        "spec_text": "spec",
+        "plan_text": "plan",
+        "github_repo": "owner/repo",
+        "github_branch": "job_job-1",
+        "github_commit": "sha-existing",
+        "github_pr_url": "https://github.com/owner/repo/pull/1",
+        "review_retries": 0,
+        "ci_fix_retries": 1,
+        "ci_failure_signature": signature,
+        "ci_failure_streak": 1,
+        "ci_failure_summary": {"signature": signature, "commit_sha": "sha-existing"},
+    }
+    db.get_job.return_value = job
+    test.wait_for_ci.return_value = CIResult(passed=False, failed_logs=failed_logs)
+
+    await runner.run("job-1")
+
+    db.update_job.assert_any_call("job-1", ci_fix_retries=2)
+    assert not any(call.kwargs.get("ci_failure_streak") == 2 for call in db.update_job.call_args_list)
+    coding.start_fix.assert_not_called()
+    telegram.send_escalation.assert_called_once()
+    assert telegram.send_escalation.call_args.kwargs["reason"] == "ci_fix_retries_exceeded"
+
+
 async def test_run_from_ci_testing_resets_streak_for_new_failure_signature(services):
     runner, db, spec, plan, coding, test, git, review, telegram, _ = services
     previous_logs = [
@@ -884,6 +948,8 @@ async def test_run_from_ci_testing_does_not_consume_review_retry_budget_for_ci_f
     await runner.run("job-1")
 
     db.update_job.assert_any_call("job-1", ci_fix_retries=1)
+    summary_updates = [call.kwargs for call in db.update_job.call_args_list if call.kwargs.get("ci_failure_summary")]
+    assert summary_updates[-1]["ci_failure_summary"]["commit_sha"] == "sha-existing"
     coding.start_fix.assert_called_once()
     telegram.send_escalation.assert_not_called()
 
