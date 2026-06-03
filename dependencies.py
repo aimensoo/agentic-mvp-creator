@@ -88,6 +88,8 @@ def get_git_service() -> GitService:
         repo_owner=settings.GITHUB_REPO_OWNER,
         repo_name=settings.GITHUB_REPO_NAME,
         repo_private=settings.GITHUB_REPO_PRIVATE,
+        commit_author_name=settings.GIT_COMMIT_AUTHOR_NAME,
+        commit_author_email=settings.GIT_COMMIT_AUTHOR_EMAIL,
     )
 
 

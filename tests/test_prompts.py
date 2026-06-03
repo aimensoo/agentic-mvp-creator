@@ -1,4 +1,5 @@
 import pytest
+from services.coding_service import FIX_PROMPT_TEMPLATE
 from utils.prompts import load_prompt, PROMPTS_DIR
 
 
@@ -91,3 +92,14 @@ def test_prompts_require_external_api_mock_defaults():
     assert "external API integrations" in plan
     assert "mock/demo/local provider" in plan
     assert "Real provider code" in plan
+
+
+def test_fix_prompt_allows_foundational_runtime_files_for_foundational_issues():
+    assert "empty_mvp_workspace" in FIX_PROMPT_TEMPLATE
+    assert "missing_mvp_config" in FIX_PROMPT_TEMPLATE
+    assert "frontend/backend files" in FIX_PROMPT_TEMPLATE
+    assert 'runtime.type: "docker_compose"' in FIX_PROMPT_TEMPLATE
+    assert "non-Docker runtime" in FIX_PROMPT_TEMPLATE
+    assert "If the dev context file is missing" in FIX_PROMPT_TEMPLATE
+    assert "test -f mvp.config.json" in FIX_PROMPT_TEMPLATE
+    assert "test -f README.md" in FIX_PROMPT_TEMPLATE

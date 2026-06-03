@@ -73,6 +73,10 @@ def _write_mvp_config(path):
 
 def _write_mvp_config_v2(path):
     _write_docker_contract(path)
+    (path / "src").mkdir(exist_ok=True)
+    (path / "src" / "App.tsx").write_text(
+        "export function App() { return <button data-testid='save-task'>Save</button>; }\n"
+    )
     (path / "mvp.config.json").write_text(
         """
         {
@@ -124,7 +128,6 @@ def _write_mvp_config_v2(path):
 
 def test_quality_gate_adds_root_gitignore_and_passes_clean_mvp(tmp_path):
     _write_mvp_config(tmp_path)
-    (tmp_path / "src").mkdir()
     (tmp_path / "src" / "App.tsx").write_text("export function App() { return <button>Open dashboard</button>; }\n")
 
     result = QualityGateService().run(tmp_path)
@@ -139,15 +142,21 @@ def test_quality_gate_adds_root_gitignore_and_passes_clean_mvp(tmp_path):
 
 def test_quality_gate_accepts_v2_target_flow_contract(tmp_path):
     _write_mvp_config_v2(tmp_path)
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "App.tsx").write_text(
-        "export function App() { return <button data-testid='save-task'>Save</button>; }\n"
-    )
 
     result = QualityGateService().run(tmp_path)
 
     assert result.passed is True
     assert not [issue for issue in result.issues if issue.code in {"invalid_mvp_config", "invalid_smoke_step"}]
+
+
+def test_quality_gate_rejects_workspace_without_implementation_source(tmp_path):
+    _write_mvp_config_v2(tmp_path)
+    (tmp_path / "src" / "App.tsx").unlink()
+
+    result = QualityGateService().run(tmp_path)
+
+    assert result.passed is False
+    assert any(issue.code == "empty_mvp_workspace" for issue in result.issues)
 
 
 def test_quality_gate_requires_project_docker_ci_script(tmp_path):
@@ -167,7 +176,20 @@ def test_quality_gate_requires_readme_with_run_commands(tmp_path):
     result = QualityGateService().run(tmp_path)
 
     assert result.passed is False
-    assert any(issue.code == "missing_readme" for issue in result.issues)
+    readme_issue = next(issue for issue in result.issues if issue.code == "missing_readme")
+    assert "Create root README.md." in readme_issue.acceptance_checks
+
+
+def test_quality_gate_missing_mvp_config_includes_acceptance_checks(tmp_path):
+    _write_mvp_config_v2(tmp_path)
+    (tmp_path / "mvp.config.json").unlink()
+
+    result = QualityGateService().run(tmp_path)
+
+    assert result.passed is False
+    config_issue = next(issue for issue in result.issues if issue.code == "missing_mvp_config")
+    assert "Create root mvp.config.json." in config_issue.acceptance_checks
+    assert any("runtime.type" in check for check in config_issue.acceptance_checks)
 
 
 def test_quality_gate_rejects_readme_without_start_commands(tmp_path):
@@ -310,7 +332,6 @@ def test_quality_gate_rejects_v2_expect_request_on_non_click_step(tmp_path):
 
 def test_quality_gate_restores_managed_ci_workflow(tmp_path):
     _write_mvp_config(tmp_path)
-    (tmp_path / "src").mkdir()
     (tmp_path / "src" / "App.tsx").write_text("export function App() { return <button>Open dashboard</button>; }\n")
     workflow = tmp_path / ".github" / "workflows" / "ci.yml"
     workflow.parent.mkdir(parents=True)

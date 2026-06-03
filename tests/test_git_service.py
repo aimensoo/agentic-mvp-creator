@@ -3,11 +3,18 @@ import subprocess
 import pytest
 import git
 import yaml
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 from pathlib import Path
 from github.GithubException import UnknownObjectException
 
-from services.git_service import GitService, GitResult, NoChangesError, prepare_ci_yaml
+from services.git_service import (
+    DEFAULT_COMMIT_AUTHOR_EMAIL,
+    DEFAULT_COMMIT_AUTHOR_NAME,
+    GitResult,
+    GitService,
+    NoChangesError,
+    prepare_ci_yaml,
+)
 
 
 @pytest.fixture
@@ -47,6 +54,17 @@ def _make_mock_github(full_name: str = "testowner/testrepo-j1", default_branch: 
     return gh, gh_repo
 
 
+def _assert_identity_configured_before_commit(mock_repo, commit_call):
+    calls = mock_repo.git.method_calls
+    name_call = call.config("user.name", DEFAULT_COMMIT_AUTHOR_NAME)
+    email_call = call.config("user.email", DEFAULT_COMMIT_AUTHOR_EMAIL)
+
+    assert name_call in calls
+    assert email_call in calls
+    assert calls.index(name_call) < calls.index(commit_call)
+    assert calls.index(email_call) < calls.index(commit_call)
+
+
 def test_push_and_create_pr(service, tmp_path):
     mock_repo, mock_origin = _make_mock_repo()
     mock_gh, mock_gh_repo = _make_mock_github(full_name="testowner/testrepo-job-456")
@@ -71,6 +89,10 @@ def test_push_and_create_pr(service, tmp_path):
     mock_repo.git.checkout.assert_called_once_with("-b", "job_job-456")
     mock_repo.git.add.assert_called_once_with(".")
     mock_repo.git.commit.assert_called_once_with("-m", "feat: generated MVP for job job-456")
+    _assert_identity_configured_before_commit(
+        mock_repo,
+        call.commit("-m", "feat: generated MVP for job job-456"),
+    )
     mock_origin.fetch.assert_called_once_with("main")
     mock_repo.git.merge.assert_called_once_with(
         "--allow-unrelated-histories",
@@ -164,6 +186,7 @@ def test_force_push(service, tmp_path):
 
     mock_repo.git.add.assert_called_once_with(".")
     mock_repo.git.commit.assert_called_once_with("--amend", "--no-edit")
+    _assert_identity_configured_before_commit(mock_repo, call.commit("--amend", "--no-edit"))
     mock_repo.git.ls_remote.assert_called_once_with("--heads", "origin", "job_job-789")
     mock_origin.push.assert_called_once()
     call_args = mock_origin.push.call_args

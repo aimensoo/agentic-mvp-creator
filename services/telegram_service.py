@@ -316,6 +316,7 @@ def _reason_sentence(reason: str) -> str:
         "test_retries_exceeded": "Локальные тесты всё ещё падают после попыток автопочинки.",
         "quality_gate_failed": "Quality gate не прошёл после попыток автопочинки.",
         "review_retries_exceeded": "Код-ревью всё ещё требует правок после нескольких попыток.",
+        "opencode_model_error": "OpenCode не смог запустить coding-сессию из-за ошибки модели или провайдера.",
         "opencode_stuck_retries_exceeded": "OpenCode застрял несколько раз подряд и дальше лучше смотреть вручную.",
         "watchdog_stale": "Pipeline слишком долго не подавал признаков прогресса.",
     }

@@ -612,6 +612,7 @@ async def test_start_fix_includes_structured_ci_issue_guidance(service, mock_ope
                 "severity": "critical",
                 "code": "protected_route_auth_redirect_after_login",
                 "description": "Login succeeds but /clients redirects back to login.",
+                "path": "mvp.config.json",
                 "evidence": ["POST /api/auth/login returned 201", "localStorage has salesflow_token"],
                 "related_checks": ["Inspect middleware.ts cookie key", "Inspect auth.ts token storage"],
                 "acceptance_checks": ["Run Playwright login -> /clients"],
@@ -622,6 +623,7 @@ async def test_start_fix_includes_structured_ci_issue_guidance(service, mock_ope
 
     sent_text = mock_opencode.send_prompt_async.call_args.args[1]
     assert "protected_route_auth_redirect_after_login" in sent_text
+    assert "Path: mvp.config.json" in sent_text
     assert "Evidence:" in sent_text
     assert "POST /api/auth/login returned 201" in sent_text
     assert "Related checks:" in sent_text
@@ -743,7 +745,7 @@ async def test_check_state_returns_empty_result_when_idle_no_messages(service, m
     assert state == OpenCodeRunState.EMPTY_RESULT
 
 
-async def test_check_state_returns_empty_result_when_idle_model_error_in_messages(service, mock_opencode):
+async def test_check_state_returns_model_error_when_idle_model_error_in_messages(service, mock_opencode):
     mock_opencode.is_session_busy = AsyncMock(return_value=False)
     mock_opencode.get_diff = AsyncMock(return_value=[])
     mock_opencode.get_session_messages = AsyncMock(
@@ -757,7 +759,32 @@ async def test_check_state_returns_empty_result_when_idle_model_error_in_message
 
     state = await service.check_state("job-1", "sess-1")
 
-    assert state == OpenCodeRunState.EMPTY_RESULT
+    assert state == OpenCodeRunState.MODEL_ERROR
+
+
+async def test_check_state_returns_model_error_when_free_model_promotion_ended(service, mock_opencode):
+    mock_opencode.is_session_busy = AsyncMock(return_value=False)
+    mock_opencode.get_diff = AsyncMock(return_value=[])
+    mock_opencode.get_session_messages = AsyncMock(
+        return_value=[
+            {
+                "role": "assistant",
+                "error": {
+                    "name": "APIError",
+                    "data": {
+                        "message": (
+                            "Free promotion has ended for MiniMax M3 Free. "
+                            "You can continue using the model by subscribing to OpenCode Go."
+                        )
+                    },
+                },
+            },
+        ]
+    )
+
+    state = await service.check_state("job-1", "sess-1")
+
+    assert state == OpenCodeRunState.MODEL_ERROR
 
 
 async def test_check_state_completes_when_idle_empty_diff_but_messages_present(service, mock_opencode):

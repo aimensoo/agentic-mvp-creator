@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 
 import git
 from jinja2 import Environment, FileSystemLoader
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from utils.logger import get_logger
 
@@ -320,6 +320,9 @@ class QualityGateIssue(BaseModel):
     description: str
     path: str | None = None
     line: int | None = None
+    evidence: list[str] = Field(default_factory=list)
+    related_checks: list[str] = Field(default_factory=list)
+    acceptance_checks: list[str] = Field(default_factory=list)
 
 
 class QualityGateResult(BaseModel):
@@ -337,6 +340,7 @@ class QualityGateService:
         untracked_artifacts = untrack_forbidden_artifacts(workspace)
 
         issues = []
+        issues.extend(_implementation_issues(workspace))
         issues.extend(_mvp_config_issues(workspace))
         issues.extend(_readme_issues(workspace))
         issues.extend(_docker_runtime_issues(workspace))
@@ -388,6 +392,27 @@ def ensure_mvp_gitignore(workspace: Path) -> None:
     logger.info("quality_gate.gitignore_updated", path=str(gitignore), patterns=len(missing))
 
 
+def _implementation_issues(workspace: Path) -> list[QualityGateIssue]:
+    if any(_iter_source_files(workspace)):
+        return []
+
+    return [
+        QualityGateIssue(
+            severity="major",
+            code="empty_mvp_workspace",
+            path=".",
+            description=(
+                "Generated MVP must include implementation source files. The workspace currently has no "
+                "project-owned Python, JavaScript, TypeScript, Vue, Svelte, or HTML source files."
+            ),
+            acceptance_checks=[
+                "Create project-owned implementation source files under the MVP workspace.",
+                "Do not satisfy this by adding only docs, generated output, lockfiles, or dependency artifacts.",
+            ],
+        )
+    ]
+
+
 def write_mvp_report(workspace: Path, result: QualityGateResult) -> None:
     lines = [
         "# MVP Quality Report",
@@ -437,6 +462,13 @@ def _readme_issues(workspace: Path) -> list[QualityGateIssue]:
                     "Generated MVP must include a root README.md with a short project overview and "
                     "exact setup/run commands."
                 ),
+                acceptance_checks=[
+                    "Create root README.md.",
+                    "Include a short plain-language project overview.",
+                    "Document exact Docker Compose setup/start commands.",
+                    "Document env bootstrap from the committed env template when one exists.",
+                    "Document local URLs/ports and demo or seed commands when present.",
+                ],
             )
         ]
 
@@ -504,6 +536,14 @@ def _mvp_config_issues(workspace: Path) -> list[QualityGateIssue]:
                     "Generated MVP must declare a runnable mvp.config.json v2 smoke contract with "
                     "runtime, readiness, data-testid targets, flows, expect_request, and wait_for_outcome."
                 ),
+                acceptance_checks=[
+                    "Create root mvp.config.json.",
+                    "Use valid JSON with `version: 2`.",
+                    "Use `runtime.type: docker_compose` and point `runtime.compose_file` to an existing compose file.",
+                    "Make readiness URLs match the Docker Compose published ports.",
+                    "Declare data-testid targets that exist in the implemented UI.",
+                    "Declare at least one happy-path flow with a backend `expect_request` and final `wait_for_outcome`.",
+                ],
             )
         ]
 

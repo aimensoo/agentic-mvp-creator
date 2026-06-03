@@ -23,11 +23,12 @@ AI coding workflows often start from unstructured product requests and then requ
 ## Requirements
 
 - Python 3.11
+- Node.js 20 and npm for host-local runs of generated Node project checks
 - Docker and Docker Compose
 - Postgres, or the bundled Compose `postgres` service
 - `psql` for applying migrations
 - OpenClaw-compatible chat API
-- OpenCode server, or the bundled Compose `opencode` service
+- OpenCode server, or the bundled Compose `opencode` service. `OPENCODE_MODEL` must use OpenCode's `provider/model` format; the default is `zai-coding-plan/glm-5.1`.
 - Telegram bot token
 - GitHub token with repository, workflow, pull request, and Actions read access
 

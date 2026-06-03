@@ -251,6 +251,9 @@ class PipelineRunner:
             raise RuntimeError("OpenCode session id is missing")
 
         state = await self._coding_service.check_state(str(job["id"]), session_id)
+        if state == OpenCodeRunState.MODEL_ERROR:
+            return await self._handle_opencode_model_error(job, session_id, phase="coding")
+
         if state in RECOVERABLE_OPENCODE_STATES:
             return await self._handle_stuck_opencode(job, session_id, phase="coding", state=state)
 
@@ -271,6 +274,9 @@ class PipelineRunner:
             raise RuntimeError("OpenCode fix session id is missing")
 
         state = await self._coding_service.check_state(str(job["id"]), session_id)
+        if state == OpenCodeRunState.MODEL_ERROR:
+            return await self._handle_opencode_model_error(job, session_id, phase="fixing")
+
         if state in RECOVERABLE_OPENCODE_STATES:
             return await self._handle_stuck_opencode(job, session_id, phase="fixing", state=state)
 
@@ -294,6 +300,46 @@ class PipelineRunner:
         job["opencode_session_id"] = None
         job["opencode_stuck_retries"] = 0
         return await self._set_status(job, JobStatus.LOCAL_TESTING)
+
+    async def _handle_opencode_model_error(
+        self,
+        job: dict[str, Any],
+        session_id: str,
+        phase: str,
+    ) -> dict[str, Any]:
+        logger.warning(
+            "pipeline.opencode_model_error_detected",
+            job_id=str(job["id"]),
+            session_id=session_id,
+            phase=phase,
+        )
+
+        try:
+            await self._coding_service.abort(session_id)
+        except Exception as exc:
+            logger.warning(
+                "pipeline.opencode_abort_after_model_error_failed",
+                job_id=str(job["id"]),
+                session_id=session_id,
+                error=str(exc),
+            )
+
+        await self._db.update_job(
+            job["id"],
+            opencode_session_id=None,
+            opencode_stuck_retries=0,
+        )
+        job["opencode_session_id"] = None
+        job["opencode_stuck_retries"] = 0
+        await self._escalate(
+            job,
+            reason="opencode_model_error",
+            details=(
+                "OpenCode returned a model/provider error and produced no code changes.\n"
+                "Check OPENCODE_MODEL, provider credentials/subscription, and current model availability."
+            ),
+        )
+        return job
 
     async def _handle_stuck_opencode(
         self,
@@ -368,15 +414,6 @@ class PipelineRunner:
         while review_attempt <= self._max_review_retries:
             self._restore_frozen_docker_ci(job, workspace_path)
             job = await self._set_status(job, JobStatus.LOCAL_TESTING)
-            local_result = self._test_service.run_local(str(workspace_path))
-            if not local_result.passed:
-                await self._handle_pre_push_failure(
-                    job,
-                    source="local_tests",
-                    issues=[],
-                    context=local_result.output,
-                )
-                return
 
             quality_result = self._quality_gate.run(workspace_path)
             if not quality_result.passed:
@@ -385,6 +422,16 @@ class PipelineRunner:
                     source="quality_gate",
                     issues=[_jsonable(issue) for issue in quality_result.issues],
                     context=quality_result.output,
+                )
+                return
+
+            local_result = self._test_service.run_local(str(workspace_path))
+            if not local_result.passed:
+                await self._handle_pre_push_failure(
+                    job,
+                    source="local_tests",
+                    issues=[],
+                    context=local_result.output,
                 )
                 return
 

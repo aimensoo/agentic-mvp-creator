@@ -481,6 +481,31 @@ async def test_run_from_fixing_in_progress_waits_when_opencode_is_busy(services)
     test.run_local.assert_not_called()
 
 
+async def test_run_from_fixing_in_progress_escalates_opencode_model_error(services):
+    runner, db, spec, plan, coding, test, git, review, telegram, _ = services
+    job = {
+        "id": "job-1",
+        "status": "fixing_in_progress",
+        "input_text": "t1",
+        "spec_text": "spec",
+        "plan_text": "plan",
+        "opencode_session_id": "sess-fix",
+        "opencode_stuck_retries": 1,
+        "review_retries": 0,
+    }
+    db.get_job.return_value = job
+    coding.check_state.return_value = OpenCodeRunState.MODEL_ERROR
+
+    await runner.run("job-1")
+
+    coding.abort.assert_called_once_with("sess-fix")
+    db.update_job.assert_any_call("job-1", opencode_session_id=None, opencode_stuck_retries=0)
+    telegram.send_escalation.assert_called_once()
+    assert telegram.send_escalation.call_args.kwargs["reason"] == "opencode_model_error"
+    test.run_local.assert_not_called()
+    git.push_and_create_pr.assert_not_called()
+
+
 async def test_run_from_fixing_in_progress_recovers_from_stuck_opencode_session(services):
     runner, db, spec, plan, coding, test, git, review, telegram, _ = services
     job = {
@@ -1138,6 +1163,7 @@ async def test_quality_gate_failure_is_fixed_before_push(tmp_path):
 
     coding.start_fix.assert_called_once()
     assert "placeholder detected" in coding.start_fix.call_args.kwargs["context"]
+    test.run_local.assert_not_called()
     signature_updates = [
         call.kwargs for call in db.update_job.call_args_list if call.kwargs.get("local_failure_signature")
     ]

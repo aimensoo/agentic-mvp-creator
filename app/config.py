@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     GITHUB_REPO_OWNER: str = ""
     GITHUB_REPO_NAME: str = ""
     GITHUB_REPO_PRIVATE: bool = True
+    GIT_COMMIT_AUTHOR_NAME: str = "Agentic MVP Creator"
+    GIT_COMMIT_AUTHOR_EMAIL: str = "agentic-mvp-creator@users.noreply.github.com"
 
     TELEGRAM_BOT_TOKEN: SecretStr = SecretStr("")
     TELEGRAM_APPROVAL_CHAT_ID: str = ""

@@ -18,6 +18,7 @@ class OpenCodeRunState(StrEnum):
     WAITING_PERMISSION = "waiting_permission"
     WAITING_INPUT = "waiting_input"
     EMPTY_RESULT = "empty_result"
+    MODEL_ERROR = "model_error"
 
 
 EMPTY_DIFF_CONTINUE_PROMPT = """Continue the current task now.
@@ -126,6 +127,8 @@ Working directory: `{workspace_path}`
 
 Read `dev/active/mvp-implementation/mvp-implementation-context.md` to understand the current state of the project.
 Then inspect the current workspace files directly. Do not assume the previous session context is available.
+If the dev context file is missing, do not stop and do not ask for input. Use `REQUEST.md`, `SPEC.md`, `PLAN.md`,
+and `TASK.md` as context, then create or update the missing dev docs as part of the fix when relevant.
 
 ## Issues to fix
 
@@ -138,6 +141,19 @@ Then inspect the current workspace files directly. Do not assume the previous se
 ## Rules
 
 - Fix ONLY the listed issues. Do NOT go beyond MVP scope.
+- "Fix ONLY the listed issues" means do not add unrelated product features. If a listed issue is foundational
+  (`empty_mvp_workspace`, `missing_mvp_config`, `invalid_mvp_config`, `missing_readme`,
+  `missing_docker_ci_script`, `invalid_docker_ci_script`), creating or updating the necessary app source,
+  frontend/backend files, tests, Docker runtime, `.env.example`, README, and smoke-test contract is in scope.
+- `mvp.config.json` v2 must use `runtime.type: "docker_compose"` for this pipeline. Do not switch to a
+  non-Docker runtime to avoid Docker setup.
+- If the issue list contains `missing_mvp_config`, create a root `mvp.config.json` before finishing. It must
+  declare runtime, readiness, data-testid targets, flows, `expect_request`, and `wait_for_outcome` for a real
+  runnable happy path.
+- If the issue list contains `missing_readme`, create a root `README.md` before finishing. It must document the
+  actual Docker Compose setup/run commands, ports, env bootstrap, and demo/seed flow that exist in the workspace.
+- Before finishing any foundational fix, run file-existence checks for the exact missing root files, for example
+  `test -f mvp.config.json` and `test -f README.md`.
 - If an issue says a visible control is a placeholder or fake action, either implement the full UI -> API -> persistence flow or remove the control from the UI.
 - If an issue says the UI is unstyled/browser-default, fix the CSS pipeline and verify compiled styles actually affect visible controls.
 - If an issue says the UI is low-quality, raw/default, overlapping, or visually broken, fix the frontend layout/design system directly. Do not only make tests pass.
@@ -220,6 +236,8 @@ class CodingService:
         self._busy_observations.pop(session_id, None)
         if not diff:
             empty_diff_state = await self._empty_diff_message_state(job_id, session_id)
+            if empty_diff_state == "model_error":
+                return OpenCodeRunState.MODEL_ERROR
             if empty_diff_state == "empty_result":
                 return OpenCodeRunState.EMPTY_RESULT
         else:
@@ -494,7 +512,7 @@ class CodingService:
                     job_id=job_id,
                     session_id=session_id,
                 )
-                return "empty_result"
+                return "model_error"
 
         return "messages_present"
 
@@ -567,6 +585,10 @@ def _format_issues_for_prompt(issues: list[dict]) -> str:
         if code:
             header += f" {code}:"
         formatted.append(f"{header} {description}".rstrip())
+        path = item.get("path")
+        line = item.get("line")
+        if path:
+            formatted.append(f"  Path: {path}:{line}" if line else f"  Path: {path}")
         _append_prompt_list(formatted, "Evidence", item.get("evidence"))
         _append_prompt_list(formatted, "Related checks", item.get("related_checks"))
         _append_prompt_list(formatted, "Acceptance checks", item.get("acceptance_checks"))
@@ -929,7 +951,11 @@ def _looks_like_waiting_permission(text: str) -> bool:
 
 
 _MODEL_ERROR_PATTERNS = (
+    "free promotion has ended",
+    "modelerror",
     "not supported for format",
+    "provider.*not found",
+    "provider.*model.*not.*found",
     "model not supported",
     "unsupported model",
     "invalid model",

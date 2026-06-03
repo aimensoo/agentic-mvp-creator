@@ -14,6 +14,8 @@ logger = get_logger(__name__)
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 _jinja_env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)))
+DEFAULT_COMMIT_AUTHOR_NAME = "Agentic MVP Creator"
+DEFAULT_COMMIT_AUTHOR_EMAIL = "agentic-mvp-creator@users.noreply.github.com"
 
 
 class NoChangesError(RuntimeError):
@@ -34,11 +36,15 @@ class GitService:
         repo_owner: str,
         repo_name: str,
         repo_private: bool = True,
+        commit_author_name: str = DEFAULT_COMMIT_AUTHOR_NAME,
+        commit_author_email: str = DEFAULT_COMMIT_AUTHOR_EMAIL,
     ):
         self._github_token = github_token
         self._repo_owner = repo_owner
         self._repo_name_prefix = repo_name
         self._repo_private = repo_private
+        self._commit_author_name = commit_author_name.strip() or DEFAULT_COMMIT_AUTHOR_NAME
+        self._commit_author_email = commit_author_email.strip() or DEFAULT_COMMIT_AUTHOR_EMAIL
 
     def push_and_create_pr(
         self,
@@ -52,6 +58,7 @@ class GitService:
         gh = github_lib.Github(self._github_token)
         gh_repo = self._get_or_create_job_repo(gh, job_id)
         repo = _get_or_init_repo(workspace_path)
+        _configure_commit_identity(repo, self._commit_author_name, self._commit_author_email)
 
         branch_name = f"job_{job_id}"
         remote_url = f"https://{self._github_token}@github.com/{gh_repo.full_name}.git"
@@ -97,6 +104,7 @@ class GitService:
         gh = github_lib.Github(self._github_token)
         gh_repo = self._get_or_create_job_repo(gh, job_id)
         repo = _get_or_init_repo(workspace_path)
+        _configure_commit_identity(repo, self._commit_author_name, self._commit_author_email)
         remote_url = f"https://{self._github_token}@github.com/{gh_repo.full_name}.git"
         origin = _configure_origin(repo, remote_url)
 
@@ -188,6 +196,11 @@ def _configure_origin(repo: git.Repo, remote_url: str):
     origin = repo.remotes.origin
     origin.set_url(remote_url)
     return origin
+
+
+def _configure_commit_identity(repo: git.Repo, author_name: str, author_email: str) -> None:
+    repo.git.config("user.name", author_name)
+    repo.git.config("user.email", author_email)
 
 
 def _fetch_default_branch(origin, default_branch: str) -> str | None:
