@@ -1,0 +1,6 @@
+{
+  "user_request": "Build a small CRM dashboard where users can create leads, update lead statuses, add notes, and view a kanban board.",
+  "input_source": "api",
+  "chat_id": 123,
+  "telegram_user_id": 456
+}

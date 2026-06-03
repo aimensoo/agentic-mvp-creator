@@ -1,0 +1,89 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pipeline
+      POSTGRES_USER: pipeline
+      POSTGRES_PASSWORD: pipeline
+    ports:
+      - "${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - pipeline-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pipeline -d pipeline"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrator:
+    image: postgres:16-alpine
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://pipeline:pipeline@postgres:5432/pipeline
+    volumes:
+      - ./migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c 'for migration in /migrations/*.sql; do
+      echo "Applying $$migration";
+      psql "$$DATABASE_URL" -f "$$migration";
+      done'
+
+  backend:
+    build: .
+    ports:
+      - "${BACKEND_PORT:-18000}:8000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://pipeline:pipeline@postgres:5432/pipeline
+      OPENCODE_API_URL: http://opencode:4096
+      WORKSPACE_ROOT: /workspaces
+      OPENCODE_WORKSPACE_ROOT: /workspaces
+    volumes:
+      - ./workspaces:/workspaces
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
+      opencode:
+        condition: service_started
+
+  opencode:
+    build:
+      context: .
+      dockerfile: Dockerfile.opencode
+    ports:
+      - "${OPENCODE_PORT:-14096}:4096"
+    environment:
+      OPENCODE_SERVER_PASSWORD: ${OPENCODE_SERVER_PASSWORD}
+      OPENCODE_MODEL: ${OPENCODE_MODEL:-zai-coding-plan/glm-5.1}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      ZAI_API_KEY: ${ZAI_API_KEY:-}
+    volumes:
+      - ./workspaces:/workspaces
+      - ./.opencode-share:/root/.local/share/opencode
+      - ./.opencode-state:/root/.local/state/opencode
+
+  telegram-bot:
+    build: .
+    env_file:
+      - .env
+    environment:
+      BACKEND_API_URL: http://backend:8000/api/v1
+    depends_on:
+      backend:
+        condition: service_started
+    command: ["python", "telegram_bot/listener.py"]
+
+  # OpenClaw is expected to run separately. Point OPENCLAW_API_URL in .env
+  # to your OpenClaw/Ollama-compatible endpoint.
+
+volumes:
+  pipeline-db-data:
