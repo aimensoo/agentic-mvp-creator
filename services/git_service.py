@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from utils.logger import get_logger
 from utils.redaction import redact_secrets
-from services.quality_gate_service import ensure_mvp_gitignore
+from services.quality_gate_service import ensure_mvp_gitignore, untrack_forbidden_artifacts
 
 logger = get_logger(__name__)
 
@@ -65,6 +65,7 @@ class GitService:
         origin = _configure_origin(repo, remote_url)
         branch_created = _checkout_job_branch(repo, branch_name)
         repo.git.add(".")
+        untrack_forbidden_artifacts(workspace_path)
         _commit_if_needed(repo, f"feat: generated MVP for job {job_id}")
         if branch_created:
             base_ref = _fetch_default_branch(origin, gh_repo.default_branch)
@@ -109,6 +110,7 @@ class GitService:
         origin = _configure_origin(repo, remote_url)
 
         repo.git.add(".")
+        untrack_forbidden_artifacts(workspace_path)
         if not repo.is_dirty(index=True, working_tree=False, untracked_files=False):
             raise NoChangesError(
                 f"force_push: workspace has no staged changes for job {job_id}; OpenCode fix session produced no diff"

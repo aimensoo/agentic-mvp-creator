@@ -418,6 +418,24 @@ def test_quality_gate_untracks_dependency_artifacts_without_deleting_files(tmp_p
     assert "backend/node_modules/pkg/index.js" not in repo.git.ls_files()
 
 
+def test_quality_gate_untracks_python_virtualenv_without_deleting_files(tmp_path):
+    _write_mvp_config(tmp_path)
+    repo = git.Repo.init(tmp_path)
+    virtualenv_file = tmp_path / "backend" / ".venv" / "lib" / "python3.11" / "site-packages" / "pkg.py"
+    virtualenv_file.parent.mkdir(parents=True)
+    virtualenv_file.write_text("dependency artifact\n")
+    repo.git.add("-f", "backend/.venv/lib/python3.11/site-packages/pkg.py")
+
+    result = QualityGateService().run(tmp_path)
+
+    assert result.passed is True
+    assert virtualenv_file.exists()
+    assert "backend/.venv/lib/python3.11/site-packages/pkg.py" not in repo.git.ls_files()
+    gitignore = (tmp_path / ".gitignore").read_text()
+    assert ".venv/" in gitignore
+    assert "venv/" in gitignore
+
+
 def test_quality_gate_stats_exclude_dependencies_and_build_outputs(tmp_path):
     _write_mvp_config(tmp_path)
     (tmp_path / "backend" / "src").mkdir(parents=True)

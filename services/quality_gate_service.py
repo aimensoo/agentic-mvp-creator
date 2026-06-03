@@ -20,6 +20,10 @@ DOCKER_CI_SCRIPT_PATH = ".pipeline/docker-ci.sh"
 
 REQUIRED_GITIGNORE_PATTERNS = [
     "node_modules/",
+    ".venv/",
+    "venv/",
+    "env/",
+    "__pypackages__/",
     "dist/",
     "build/",
     "coverage/",
@@ -28,6 +32,7 @@ REQUIRED_GITIGNORE_PATTERNS = [
     ".nuxt/",
     ".turbo/",
     ".vite/",
+    ".ruff_cache/",
     ".pytest_cache/",
     ".mypy_cache/",
     "__pycache__/",
@@ -148,9 +153,12 @@ IGNORED_DIRS = {
     ".git",
     ".venv",
     "venv",
+    "env",
+    "__pypackages__",
     "__pycache__",
     ".pytest_cache",
     ".mypy_cache",
+    ".ruff_cache",
     "node_modules",
     "dist",
     "build",
@@ -2661,7 +2669,25 @@ def _is_forbidden_git_path(path: str) -> bool:
 
 def _forbidden_git_root(path: str) -> str | None:
     parts = Path(path).parts
-    for artifact_dir in ("node_modules", "dist", "build", "coverage", ".cache", ".next", ".nuxt", ".turbo", ".vite"):
+    for artifact_dir in (
+        "node_modules",
+        ".venv",
+        "venv",
+        "env",
+        "__pypackages__",
+        "dist",
+        "build",
+        "coverage",
+        ".cache",
+        ".next",
+        ".nuxt",
+        ".turbo",
+        ".vite",
+        ".ruff_cache",
+        ".pytest_cache",
+        ".mypy_cache",
+        "__pycache__",
+    ):
         if artifact_dir in parts:
             index = parts.index(artifact_dir)
             return "/".join(parts[: index + 1])

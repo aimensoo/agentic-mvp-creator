@@ -108,7 +108,9 @@ def test_push_and_create_pr(service, tmp_path):
     assert "This is the spec text" in pr_call.kwargs["body"]
     assert pr_call.kwargs["head"] == "job_job-456"
     assert pr_call.kwargs["base"] == "main"
-    assert "node_modules/" in (tmp_path / ".gitignore").read_text()
+    gitignore = (tmp_path / ".gitignore").read_text()
+    assert "node_modules/" in gitignore
+    assert ".venv/" in gitignore
 
 
 def test_push_and_create_pr_initializes_repo_when_missing(service, tmp_path):
