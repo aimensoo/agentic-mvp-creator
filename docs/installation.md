@@ -7,7 +7,7 @@
 - Postgres, or the bundled Compose service
 - `psql` for applying SQL migrations
 - OpenClaw-compatible chat endpoint
-- OpenCode server, or the bundled Compose service
+- OpenCode server, or the bundled Compose service with provider credentials
 - Telegram bot token
 - GitHub token for generated repository and PR operations
 
@@ -26,6 +26,8 @@ cp .env.example .env
 ```
 
 Edit `.env` with local endpoint URLs and tokens. Keep real `.env` files out of git.
+
+For OpenCode, authenticate the provider used by `OPENCODE_MODEL` before running jobs. The bundled Compose service mounts `.opencode-share/` as OpenCode's local share directory, so a local `.opencode-share/auth.json` file works and stays gitignored. If your provider supports API keys from environment variables, set only the relevant key in `.env`, such as `ZAI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY`.
 
 ## Docker Services
 

@@ -240,6 +240,8 @@ class CodingService:
                 return OpenCodeRunState.MODEL_ERROR
             if empty_diff_state == "empty_result":
                 return OpenCodeRunState.EMPTY_RESULT
+            if empty_diff_state in {"awaiting_assistant", "unknown"}:
+                return await self._state_despite_busy_status(job_id, session_id)
         else:
             self._empty_diff_followups.pop(session_id, None)
         _log_completed(job_id, session_id, diff)
@@ -258,8 +260,9 @@ class CodingService:
             return OpenCodeRunState.RUNNING
 
         now = self._clock()
-        signature = _diff_signature(diff)
         diff_fields = _diff_log_fields(diff)
+        activity_messages = await self._session_messages_for_activity(job_id, session_id)
+        signature = _run_activity_signature(diff, activity_messages)
         observation = self._busy_observations.get(session_id)
         if observation is None or observation.signature != signature:
             self._busy_observations[session_id] = _BusyObservation(
@@ -329,6 +332,18 @@ class CodingService:
         )
         _log_completed(job_id, session_id, diff, status_override=True)
         return OpenCodeRunState.COMPLETED
+
+    async def _session_messages_for_activity(self, job_id: str, session_id: str) -> list:
+        try:
+            return await self._client.get_session_messages(session_id)
+        except Exception as exc:
+            logger.warning(
+                "coding_service.activity_messages_check_failed",
+                job_id=job_id,
+                session_id=session_id,
+                error=str(exc),
+            )
+            return []
 
     async def _send_empty_diff_followup(
         self,
@@ -514,6 +529,15 @@ class CodingService:
                 )
                 return "model_error"
 
+        if not any(_is_assistant_message(msg) for msg in messages):
+            logger.info(
+                "coding_service.empty_diff_awaiting_assistant",
+                job_id=job_id,
+                session_id=session_id,
+                message_count=len(messages),
+            )
+            return "awaiting_assistant"
+
         return "messages_present"
 
     async def abort(self, session_id: str) -> None:
@@ -625,6 +649,59 @@ class _DiffStats:
 def _diff_signature(diff: list) -> str:
     payload = json.dumps(diff, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _run_activity_signature(diff: list, messages: list) -> str:
+    payload = {
+        "diff": diff,
+        "messages": _messages_activity_payload(messages),
+    }
+    serialized = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _messages_activity_payload(messages: list) -> list:
+    if not isinstance(messages, list):
+        return []
+
+    activity = []
+    for msg in messages[-8:]:
+        if not isinstance(msg, dict):
+            continue
+        info = msg.get("info") if isinstance(msg.get("info"), dict) else {}
+        parts = msg.get("parts") if isinstance(msg.get("parts"), list) else []
+        activity.append(
+            {
+                "id": msg.get("id") or info.get("id"),
+                "role": _message_role(msg),
+                "finish": msg.get("finish") or info.get("finish"),
+                "completed": _nested_get(info, "time", "completed"),
+                "parts": [_part_activity_payload(part) for part in parts[-12:]],
+            }
+        )
+    return activity
+
+
+def _part_activity_payload(part) -> dict:
+    if not isinstance(part, dict):
+        return {}
+    state = part.get("state") if isinstance(part.get("state"), dict) else {}
+    return {
+        "id": part.get("id"),
+        "type": part.get("type"),
+        "tool": part.get("tool"),
+        "callID": part.get("callID"),
+        "status": state.get("status"),
+        "title": state.get("title"),
+    }
+
+
+def _nested_get(value, *keys):
+    for key in keys:
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+    return value
 
 
 def _diff_log_fields(diff: list) -> dict:
@@ -921,6 +998,19 @@ def _payload_text(value) -> str:
     if isinstance(value, list):
         return " ".join(_payload_text(item) for item in value)
     return ""
+
+
+def _message_role(msg) -> str:
+    if not isinstance(msg, dict):
+        return ""
+    role = msg.get("role")
+    if not role and isinstance(msg.get("info"), dict):
+        role = msg["info"].get("role")
+    return str(role or "").lower()
+
+
+def _is_assistant_message(msg) -> bool:
+    return _message_role(msg) == "assistant"
 
 
 def _recent_payload(value):

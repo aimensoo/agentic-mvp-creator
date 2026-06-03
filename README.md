@@ -28,7 +28,7 @@ AI coding workflows often start from unstructured product requests and then requ
 - Postgres, or the bundled Compose `postgres` service
 - `psql` for applying migrations
 - OpenClaw-compatible chat API
-- OpenCode server, or the bundled Compose `opencode` service. `OPENCODE_MODEL` must use OpenCode's `provider/model` format; the default is `zai-coding-plan/glm-5.1`.
+- OpenCode server, or the bundled Compose `opencode` service. `OPENCODE_MODEL` must use OpenCode's `provider/model` format; the default is `zai-coding-plan/glm-5.1`. The selected provider must be authenticated through a gitignored `.opencode-share/auth.json` file or provider API key variables in `.env`.
 - Telegram bot token
 - GitHub token with repository, workflow, pull request, and Actions read access
 
@@ -42,6 +42,8 @@ cp .env.example .env
 ```
 
 Edit `.env` with local endpoints and tokens. Real `.env` files must stay out of git.
+
+For the bundled OpenCode service, either keep your local OpenCode auth state in `.opencode-share/` or set the provider key used by `OPENCODE_MODEL` in `.env`, for example `ZAI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY`.
 
 More detail: [docs/installation.md](docs/installation.md)
 

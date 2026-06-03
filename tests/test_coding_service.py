@@ -131,6 +131,42 @@ async def test_is_complete_resets_busy_observation_when_diff_changes(mock_openco
     assert await service.is_complete("job-1", "sess-1") is False
 
 
+async def test_is_complete_resets_busy_observation_when_messages_change(mock_opencode):
+    now = 1000.0
+
+    def clock():
+        return now
+
+    service = CodingService(
+        mock_opencode,
+        timeout=10,
+        busy_stable_seconds=30,
+        clock=clock,
+    )
+    mock_opencode.is_session_busy = AsyncMock(return_value=True)
+    mock_opencode.get_diff = AsyncMock(return_value=[])
+    message_a = [{"info": {"id": "msg-a", "role": "assistant"}, "parts": [{"type": "text", "text": "Starting"}]}]
+    message_b = [{"info": {"id": "msg-b", "role": "assistant"}, "parts": [{"type": "tool", "tool": "bash"}]}]
+    mock_opencode.get_session_messages = AsyncMock(
+        side_effect=[
+            message_a,
+            message_a,
+            message_b,
+            message_b,
+            message_b,
+            message_b,
+        ]
+    )
+
+    assert await service.is_complete("job-1", "sess-1") is False
+
+    now = 1029.0
+    assert await service.is_complete("job-1", "sess-1") is False
+
+    now = 1058.0
+    assert await service.is_complete("job-1", "sess-1") is False
+
+
 async def test_check_state_returns_stuck_when_busy_empty_diff_is_stable_too_long(mock_opencode):
     now = 1000.0
 
@@ -804,6 +840,25 @@ async def test_check_state_completes_when_idle_empty_diff_but_messages_present(s
     mock_opencode.send_prompt_async.assert_not_called()
 
 
+async def test_check_state_waits_when_idle_empty_diff_has_only_user_prompt(service, mock_opencode):
+    mock_opencode.is_session_busy = AsyncMock(return_value=False)
+    mock_opencode.get_diff = AsyncMock(return_value=[])
+    mock_opencode.get_session_messages = AsyncMock(
+        return_value=[
+            {
+                "info": {"role": "user"},
+                "parts": [{"type": "text", "text": "Build the MVP"}],
+            },
+        ]
+    )
+    mock_opencode.send_prompt_async = AsyncMock()
+
+    state = await service.check_state("job-1", "sess-1")
+
+    assert state == OpenCodeRunState.RUNNING
+    mock_opencode.send_prompt_async.assert_not_called()
+
+
 async def test_check_state_does_not_use_followup_for_idle_empty_diff(service, mock_opencode):
     mock_opencode.is_session_busy = AsyncMock(return_value=False)
     mock_opencode.get_diff = AsyncMock(return_value=[])
@@ -838,6 +893,5 @@ async def test_check_state_empty_result_when_message_check_fails(service, mock_o
 
     state = await service.check_state("job-1", "sess-1")
 
-    # Falls through to COMPLETED when messages check fails (can't confirm error)
-    assert state == OpenCodeRunState.COMPLETED
+    assert state == OpenCodeRunState.RUNNING
     assert "{context}" in FIX_PROMPT_TEMPLATE
