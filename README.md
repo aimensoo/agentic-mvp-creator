@@ -1,13 +1,15 @@
-# Telegram AI Pipeline Runner
+# agentic-mvp-creator
 
 **Status:** active, experimental  
 **License:** [MIT](LICENSE)
 
-Telegram AI Pipeline Runner is a backend service for running AI-assisted MVP generation pipelines from simple user requests. A user sends a product idea to a Telegram bot or HTTP webhook; the backend drafts a spec and plan, waits for approval, runs OpenCode, validates the generated project, opens a GitHub PR, reviews it, and loops on fixes when needed.
+[Русская версия](README.ru.md)
+
+agentic-mvp-creator turns a plain product request into a structured, reviewed MVP build pipeline. A user sends an idea to a Telegram bot or HTTP webhook; the backend drafts a spec and implementation plan, waits for approval, runs OpenCode, validates the generated project, opens a GitHub PR, reviews it, and loops on fixes when needed.
 
 ## Problem
 
-AI coding workflows often start from unstructured product requests and then require manual glue: creating a spec, planning implementation, preparing a workspace, running an agent, checking tests, opening a PR, watching CI, and asking for human approval. This project makes that workflow explicit and repeatable.
+AI coding workflows often start from unstructured product requests and then require manual glue: creating a spec, planning implementation, preparing a workspace, running an agent, checking tests, opening a PR, watching CI, and asking for human approval. agentic-mvp-creator makes that workflow explicit, repeatable, and inspectable.
 
 ## Features
 
@@ -132,9 +134,11 @@ More examples: [examples/](examples/)
 - [Usage](docs/usage.md)
 - [Configuration](docs/configuration.md)
 - [Architecture](docs/architecture.md)
+- [Demo recording guide](docs/demo.md)
 - [Release notes](docs/release.md)
 - [Security policy](SECURITY.md)
 - [Changelog](CHANGELOG.md)
+- [Contributing](CONTRIBUTING.md)
 
 ## CI And Quality
 

@@ -1,17 +1,17 @@
 ---
 name: Feature request
-about: Описать новую задачу или улучшение
+about: Describe a new task or improvement
 title: "[Feature]: "
 labels: enhancement
 assignees: ""
 ---
 
-## Описание задачи
+## Task
 
-## Зачем это нужно
+## Why it matters
 
-## Предлагаемое решение
+## Proposed solution
 
-## Альтернативы
+## Alternatives
 
-## Дополнительный контекст
+## Additional context

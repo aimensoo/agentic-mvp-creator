@@ -1,19 +1,19 @@
 ---
 name: Bug report
-about: Зафиксировать воспроизводимую проблему
+about: Report a reproducible problem
 title: "[Bug]: "
 labels: bug
 assignees: ""
 ---
 
-## Описание проблемы
+## Problem
 
-## Шаги воспроизведения
+## Steps to reproduce
 
-## Ожидаемое поведение
+## Expected behavior
 
-## Фактическое поведение
+## Actual behavior
 
-## Окружение
+## Environment
 
-## Логи / скриншоты
+## Logs / screenshots
