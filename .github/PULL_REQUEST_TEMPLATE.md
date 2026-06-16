@@ -1,15 +1,15 @@
-## Что изменено
+## What changed
 
 -
 
-## Зачем
+## Why
 
 -
 
-## Как проверено
+## How verified
 
 -
 
-## Риски / breaking changes
+## Risks / breaking changes
 
 -

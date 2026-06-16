@@ -1,12 +1,12 @@
 [project]
-name = "telegram-ai-pipeline-runner"
+name = "agentic-mvp-creator"
 version = "0.1.0"
-description = "Telegram-first backend for running AI MVP generation pipelines."
+description = "Agentic MVP generation pipeline from a Telegram or HTTP request to a reviewed GitHub PR."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = []
-keywords = ["ai", "pipeline", "telegram", "fastapi", "opencode"]
+keywords = ["agentic-ai", "ai-agents", "telegram-bot", "fastapi", "code-generation", "llm", "mvp"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Framework :: FastAPI",
@@ -18,10 +18,10 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/your-org/telegram-ai-pipeline-runner"
-Documentation = "https://github.com/your-org/telegram-ai-pipeline-runner/tree/main/docs"
-Issues = "https://github.com/your-org/telegram-ai-pipeline-runner/issues"
-Changelog = "https://github.com/your-org/telegram-ai-pipeline-runner/blob/main/CHANGELOG.md"
+Repository = "https://github.com/aimensoo/agentic-mvp-creator"
+Documentation = "https://github.com/aimensoo/agentic-mvp-creator/tree/main/docs"
+Issues = "https://github.com/aimensoo/agentic-mvp-creator/issues"
+Changelog = "https://github.com/aimensoo/agentic-mvp-creator/blob/main/CHANGELOG.md"
 
 [tool.ruff]
 target-version = "py311"

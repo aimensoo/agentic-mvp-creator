@@ -90,5 +90,5 @@ async def _check_openclaw_health(openclaw_client) -> None:
         logger.warning("app.openclaw_health_failed", error=str(e))
 
 
-app = FastAPI(title="Telegram AI Pipeline Runner", lifespan=lifespan)
+app = FastAPI(title="agentic-mvp-creator", lifespan=lifespan)
 app.include_router(router)

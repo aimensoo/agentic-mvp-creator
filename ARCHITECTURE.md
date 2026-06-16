@@ -2,7 +2,7 @@
 
 ## Overview
 
-Telegram AI Pipeline Runner is a backend orchestrator for generating MVP projects from plain user requests. The default public input source is Telegram: a user sends a message, the Telegram adapter calls the FastAPI webhook, and the pipeline begins from the saved `input_text`.
+agentic-mvp-creator is a backend orchestrator for generating MVP projects from plain user requests. The default public input source is Telegram: a user sends a message, the Telegram adapter calls the FastAPI webhook, and the pipeline begins from the saved `input_text`.
 
 High-level flow:
 
